@@ -1,0 +1,906 @@
+#ELENI RALLI 28/01/2024
+
+library(dplyr)
+library(lubridate)  #για τις ημερομηνιες
+library(sjPlot)
+library(foreign)
+library(psych)      # for the describe function
+library(DescTools)  # to calculate the mode
+library(corrplot)   #for the corrplot
+library(nortest) # for lillie.test
+library(gplots)   # for error bars
+library(gmodels)  #for cross table
+library(glmnet)
+
+
+#file.choose()
+library(readxl)
+data_k1<- read_excel("D:\\karlis\\project2.xlsx")
+head(data_k1)
+str(data_k1)
+#######################################################################################################################################################################################
+sum(is.na(data_k1)) # ΔΕΝ ΥΠΑΡΧΟΥΝ τιμές ειναι στο dataset NA
+
+data_k1$date.of.reservation  # κάποιες ημερομηνίες είναι σε μορφή "43442",κάποιες σε "8/24/2018" όποτε θα εφαρμοσω κατι σαν αυτο as.Date(43016, origin = "1899-12-30") στο exclel "2017-10-08"
+                              #data_k1$date.of.reservation [1]  π.χ. as.Date(data_k1$date.of.reservation [1], origin = "1899-12-30")
+
+
+# Μετατροπή των αριθμητικών και κειμενικών ημερομηνιών
+data_k1$date.of.reservation <- lapply(data_k1$date.of.reservation, function(x) {
+  if(grepl("^\\d+$", x)) {
+    return(as.Date(as.numeric(x), origin = "1899-12-30"))
+  } else {
+    return(mdy(x))
+  }
+})
+
+# Μετατροπή της λίστας πίσω σε διάνυσμα
+data_k1$date.of.reservation <- do.call(c, data_k1$date.of.reservation)
+
+# Επανατροπή του αποτελέσματος σε τύπο Date
+data_k1$date.of.reservation <- as.Date(data_k1$date.of.reservation)
+
+# Επιβεβαιώνω ότι τώρα όλες οι ημερομηνίες είναι στην κατάλληλη μορφή
+head(data_k1$date.of.reservation)
+
+sum(is.na(data_k1)) # τώρα  ΥΠΑΡΧΟΥΝ τιμές  στο dataset NA και ειναι οι 29 φεβρουαριου οποτε θα τις κανμω 1 μαρτιου
+# και το ξέρω γιατι οταν τρέχω το παρακατω προκυπτουν 2 ΝΑ
+
+# Εύρεση NA σε κάθε στήλη
+na_columns <- sapply(data_k1, function(x) sum(is.na(x)))
+
+# Εμφάνιση των στηλών που έχουν NA τιμές και τον αριθμό τους
+print(na_columns[na_columns > 0])
+
+# Εύρεση παρατηρήσεων με NA σε οποιαδήποτε στήλη
+na_rows <- apply(data_k1, 1, function(x) any(is.na(x)))
+
+# Εμφάνιση των αριθμών των σειρών που έχουν NA τιμές
+which(na_rows)
+
+# Μέτρηση των ημερομηνιών που είναι 29 Φεβρουαρίου
+initial_count <- sum(format(data_k1$date.of.reservation, "%m-%d") == "02-29", na.rm = TRUE)
+initial_count  # ολα καλα δεν υπαρχουν an εχω na.rm = TRUE
+
+
+na_positions <- which(is.na(data_k1$date.of.reservation))  # Εύρεσησης των NA τιμών που θα μετατραπούν
+
+# Μετατροπή των NA σε 1 Μαρτίου 
+for(pos in na_positions) {
+  data_k1$date.of.reservation[pos] <- as.Date("2020-03-01")
+}
+
+
+data_k1$date.of.reservation <- as.Date(data_k1$date.of.reservation)
+
+# Ελέγχουμε τις πρώτες ημερομηνίες για επιβεβαίωση
+head(data_k1$date.of.reservation)
+
+
+str(data_k1)
+
+##########################################################################################################################################################################
+#φτιαξιμο  των μεταβλητών στην μορφη που θέλουμε
+data_k1$average.price <- as.numeric(data_k1$average.price)
+data_k1$reservation.month <- format(as.Date(data_k1$date.of.reservation), "%m")
+###########################################################################################################################################################################
+#φτιαξιμο  των κανουργιων  μεταβλητων
+
+# Υπολογισμός συνολικού αριθμού επισκεπτών
+data_k1$total.guests <- data_k1$number.of.adults + data_k1$number.of.children
+
+# Υπολογισμός συνολικού αριθμού διανυκτερεύσεων
+data_k1$total.nights <- data_k1$number.of.weekend.nights + data_k1$number.of.week.nights
+
+# Μετατροπή της ημερομηνίας κράτησης σε μήνα
+data_k1$reservation.month <- format(as.Date(data_k1$date.of.reservation), "%m")
+##########################################################################################################################################################################
+
+str(data_k1) #ok
+lapply(data_k1, unique) # για να δω ποιες θα μετρατρέψω σε κατηγορικές
+
+############################################################################################################################################################################
+# οι παρακάτω μεταβλητές είναι κατάλληλες για μετατροπή σε κατηγορικές:
+
+#type.of.meal: Με μόνο τέσσερις μοναδικές τιμές, αυτή η μεταβλητή είναι κατάλληλη για μετατροπή σε κατηγορική.
+data_k1$type.of.meal <- as.factor(data_k1$type.of.meal)
+
+#car.parking.space: Εφόσον έχει μόνο δύο τιμές (0 και 1), αυτή είναι κλασική δυαδική κατηγορική μεταβλητή.
+data_k1$car.parking.space <- as.factor(data_k1$car.parking.space)
+
+#room.type: Ανάλογα με τον αριθμό των μοναδικών τιμών, αυτή η μεταβλητή μπορεί να χειριστεί ως κατηγορική.
+data_k1$room.type <- as.factor(data_k1$room.type)
+
+#market.segment.type: Έχει πέντε μοναδικές τιμές και είναι κατάλληλη για μετατροπή σε κατηγορική.
+data_k1$market.segment.type <- as.factor(data_k1$market.segment.type)
+
+#repeated: Με δύο τιμές (0 και 1), αυτή είναι κατάλληλη ως δυαδική κατηγορική μεταβλητή.
+data_k1$repeated <- as.factor(data_k1$repeated)
+
+#booking.status: Με μόνο δύο τιμές ("Not_Canceled" και "Canceled"), αυτή είναι κατάλληλη ως δυαδική κατηγορική μεταβλητή.
+data_k1$booking.status <- as.factor(data_k1$booking.status)
+
+#reservation.month: Μπορεί να χειριστεί ως κατηγορική, αν και είναι αριθμητική, αφού αντιπροσωπεύει τους μήνες.
+data_k1$reservation.month <- as.factor(data_k1$reservation.month)
+
+
+
+str(data_k1)
+###############################################################################################################################################################################
+###############################################################################################################################################################################
+###############################################################################################################################################################################
+###############################################################################################################################################################################
+###############################################################################################################################################################################
+###############################################################################################################################################################################
+#Συντομη περιγραφική στατιστική:
+#---------------------------------
+
+
+# Δημιουργία νέου dataframe μόνο με τις numeric στήλες
+data_k1_num<- data_k1[sapply(data_k1, is.numeric)]
+str(data_k1_num)
+
+summary(data_k1_num)
+describe(data_k1_num)
+
+
+#i will create this function to check quickly all these
+mean_median_skew_kurt <- function(data_vector) {
+  if (!is.numeric(data_vector)) {
+    stop("Data vector is not numeric.")
+  }
+
+  results <- list(
+    Mean = mean(data_vector, na.rm = TRUE),
+    Median = median(data_vector, na.rm = TRUE),
+    Skewness = skewness(data_vector, na.rm = TRUE),
+    Kurtosis = kurtosis(data_vector, na.rm = TRUE)
+  )
+
+  print(results)
+
+}
+
+mean_median_skew_kurt(data_k1_num$number.of.adults)
+mean_median_skew_kurt(data_k1_num$number.of.children)
+mean_median_skew_kurt(data_k1_num$number.of.weekend.nights)
+mean_median_skew_kurt(data_k1_num$number.of.week.nights)
+mean_median_skew_kurt(data_k1_num$lead.time)
+mean_median_skew_kurt(data_k1_num$P.C)
+mean_median_skew_kurt(data_k1_num$P.not.C)
+mean_median_skew_kurt(data_k1_num$average.price)
+mean_median_skew_kurt(data_k1_num$special.requests)
+mean_median_skew_kurt(data_k1_num$total.guests)
+mean_median_skew_kurt(data_k1_num$total.nights)
+
+#standard deviation
+sapply(data_k1_num[c("number.of.adults", "number.of.children", "number.of.weekend.nights", "number.of.week.nights",
+                     "lead.time", "P.C", "P.not.C", "average.price", "special.requests", "total.guests", "total.nights")],
+       function(x) round(sd(x), 0))
+
+
+par(mfrow=c(1,2))
+
+
+# stick plot for total.guests using plot and relative frequency
+x <- data_k1$total.guests
+n <- length(x)
+relative_freq <- table(x) / n
+plot(relative_freq, type='h', xlim=range(x) + c(-1, 1), main="Stick Plot for total guests",xlab="total guests", ylab="Relative Frequency", col="cornflowerblue")
+
+# Stick plot for Number of Total Nights
+x_total_nights <- data_k1$total.nights
+n_total_nights <- length(x_total_nights)
+relative_freq_total_nights <- table(x_total_nights) / n_total_nights
+plot(relative_freq_total_nights, type='h', xlim=range(x_total_nights) + c(-1, 1), main="Stick Plot for Number of Total Nights", xlab="Number of Total Nights", ylab="Relative Frequency", col="cornflowerblue")
+
+# Stick plot for Lead Time
+x_lead_time <- data_k1$lead.time
+n_lead_time <- length(x_lead_time)
+relative_freq_lead_time <- table(x_lead_time) / n_lead_time
+plot(relative_freq_lead_time, type='h', xlim=range(x_lead_time) + c(-1, 1), main="Stick Plot for Lead Time", xlab="Lead Time", ylab="Relative Frequency", col="cornflowerblue")
+
+# Stick plot for Number of Week Nights
+x_week_nights <- data_k1$number.of.week.nights
+n_week_nights <- length(x_week_nights)
+relative_freq_week_nights <- table(x_week_nights) / n_week_nights
+plot(relative_freq_week_nights, type='h', xlim=range(x_week_nights) + c(-1, 1), main="Stick Plot for Number of Week Nights", xlab="Number of Week Nights", ylab="Relative Frequency", col="cornflowerblue")
+
+# Histogram and normal curve for average.price
+x <- data_k1$average.price
+m <- mean(x); s <- sd(x)
+hist(x, probability = T, main = "Histogram for Number of average price", xlab="average price", ylab="Probability Density", col="cornflowerblue")
+curve(dnorm(x, m, s), add=T, lwd=2)
+
+
+# Stick plot for Special Requests
+x_special_requests <- data_k1$special.requests
+n_special_requests <- length(x_special_requests)
+relative_freq_special_requests <- table(x_special_requests) / n_special_requests
+plot(relative_freq_special_requests, type='h', xlim=range(x_special_requests) + c(-1, 1), main="Stick Plot for Special Requests", xlab="Special Requests", ylab="Relative Frequency", col="cornflowerblue")
+
+
+##############################
+#normality tests + qqplots
+
+par(mfrow=c(2,3))
+
+# Q-Q Plot for Number of Total Guests
+qqnorm(data_k1_num$total.guests, main = "Normal Q-Q Plot for Number of Total Guests", col = "blue")
+qqline(data_k1_num$total.guests, col = "red")
+
+# Q-Q Plot for Number of Total Nights
+qqnorm(data_k1_num$total.nights, main = "Normal Q-Q Plot for Number of Total Nights", col = "blue")
+qqline(data_k1_num$total.nights, col = "red")
+
+# Q-Q Plot for Lead Time
+qqnorm(data_k1_num$lead.time, main = "Normal Q-Q Plot for Lead Time", col = "blue")
+qqline(data_k1_num$lead.time, col = "red")
+
+# Q-Q Plot for Number of Week Nights
+qqnorm(data_k1_num$number.of.week.nights, main = "Normal Q-Q Plot for Number of Week Nights", col = "blue")
+qqline(data_k1_num$number.of.week.nights, col = "red")
+
+# Q-Q Plot for Average Price
+qqnorm(data_k1_num$average.price, main = "Normal Q-Q Plot for Average Price", col = "blue")
+qqline(data_k1_num$average.price, col = "red")
+
+# Q-Q Plot for Special Requests
+qqnorm(data_k1_num$special.requests, main = "Normal Q-Q Plot for Special Requests", col = "blue")
+qqline(data_k1_num$special.requests, col = "red")
+
+# Resetting the plot layout
+par(mfrow=c(1,1))
+
+# Shapiro-Wilk Test for normality assessment
+shapiro.test(data_k1_num$total.guests)
+shapiro.test(data_k1_num$total.nights)
+shapiro.test(data_k1_num$lead.time)
+shapiro.test(data_k1_num$number.of.week.nights)
+shapiro.test(data_k1_num$average.price)
+shapiro.test(data_k1_num$special.requests)
+
+
+lillie.test(data_k1_num$total.guests)
+lillie.test(data_k1_num$total.nights)
+lillie.test(data_k1_num$lead.time)
+lillie.test(data_k1_num$number.of.week.nights)
+lillie.test(data_k1_num$average.price)
+lillie.test(data_k1_num$special.requests)
+
+
+##################################################
+#we will examine 3 categorical variables 
+
+
+describe(data_k1$market.segment.type)
+describe(data_k1$reservation.month)
+describe(data_k1$booking.status)
+
+
+#Visual Analysis for factors  (not all )
+data_k1$market.segment.type
+data_k1$reservation.month
+data_k1$booking.status
+
+par(mfrow=c(1,3))
+# Bar plot for Market Segment Type Frequencies
+barplot(table(data_k1$market.segment.type),
+        cex.lab=0.9, las=1,
+        main = "Market Segment Type Frequencies",
+        xlab="Market Segment Type",
+        ylab="Frequency",
+        col="cornflowerblue")
+
+# Bar plot for Reservation Month Frequencies
+barplot(table(data_k1$reservation.month),
+        cex.lab=0.9, las=1,
+        main = "Reservation Month Frequencies",
+        xlab="Reservation Month",
+        ylab="Frequency",
+        col="cornflowerblue")
+
+# Bar plot for Booking Status Frequencies
+barplot(table(data_k1$booking.status),
+        cex.lab=0.9, las=1,
+        main = "Booking Status Frequencies",
+        xlab="Booking Status",
+        ylab="Frequency",
+        col="cornflowerblue")
+#colors()
+
+table(data_k1$market.segment.type)
+round(prop.table(table(data_k1$market.segment.type)),1)
+table(data_k1$reservation.month)
+round(prop.table(table(data_k1$reservation.month)),1)
+table(data_k1$booking.status)
+round(prop.table(table(data_k1$booking.status)),1)
+
+
+
+
+#######################################################################################################################
+#...................PAIRWISE COMPARISONS .................................................
+
+str(data_k1_num)
+par(mfrow=c(1,1))
+
+library(corrplot)
+corrplot(cor(data_k1_num[,c("number.of.week.nights","average.price","lead.time", "special.requests")], method = "spearman"), method="ellipse")
+
+cor(data_k1_num[,c("number.of.week.nights", "average.price", "lead.time", "special.requests")],method = "spearman")
+
+
+
+#numeric + numeric.....................................................................................................................................
+
+#( οι κατανομές αυτών των μεταβλητών οπως έχουμε δει πιο πάνω δεν ειναι κανονικές οποτε θα πάμε με
+#μη παραμετρικό έλεγχο sprearman )
+cor.test(data_k1$average.price, data_k1$number.of.week.nights, method="spearman") #p-value = 0.1175
+cor.test(data_k1$average.price , data_k1$lead.time, method="spearman") #p-value = 0.3095
+
+cor.test(data_k1$average.price , data_k1$special.requests, method="spearman") #p-value =2.483e-15
+cor.test(data_k1$number.of.week.nights , data_k1$lead.time, method="spearman") #p-value < 2.2e-16
+cor.test(data_k1$number.of.week.nights , data_k1$special.requests, method="spearman") #p-value = 0.04784
+
+cor.test(data_k1$lead.time, data_k1$special.requests, method="spearman") #p-value = 0.07097
+#Ο όρος "ties" αναφέρεται σε περιπτώσεις όπου δύο ή περισσότερες παρατηρήσεις έχουν την ίδια τιμή για μία από τις μεταβλητές που συγκρίνονται.
+# R χρησιμοποιεί μια προσεγγιστική μέθοδο για να υπολογίσει το p-value υπό την ύπαρξη ties, και το αποτέλεσμα παραμένει έγκυρο για την ερμηνεία της στατιστικής σημασίας της συσχέτισης.
+#οταν ΤΑ P VALUE > a=0.05 --> DEN απορριπτω Η0 οπου λεει δεν υπάρχει μονοτονική σχέση μεταξύ των μεταβλητών. αρα έχω την ενδειξη οτι ΔΕΝ υπαρχει μονοτονική σχέση μεταξύ των μεταβλητών
+#εκτος απο την average.price με την  special.requests
+#και την number.of.week.nights με την lead.time και number.of.week.nights με την  special.requests οπου απορριπτω Η0 , εχω ενδειξη οτι υπαρχει μονοτονικη σχεση μεταξυ τους
+
+#numeric + categorical...................................................................................................................................
+
+#average price + booking status
+lillie.test(aov(data_k1$average.price~ data_k1$booking.status)$res)#normality rejected#p-value < 2.2e-16--> Ho rejected
+shapiro.test(aov(data_k1$average.price~ data_k1$booking.status)$res)#normality rejected#p-value < 2.2e-16--> Ho rejected
+by(data_k1$average.price, data_k1$booking.status, lillie.test) # Ho rejected --> rejected the hypothesis of normality in each group
+by(data_k1$average.price, data_k1$booking.status, shapiro.test)#Ho rejected --> rejected the hypothesis of normality in each group
+#we have to do with 2 independents samples ( 1 ποσοτική , 1 δίτιμη )
+groupA <- data_k1$average.price[data_k1$booking.status == "Canceled" ]
+groupB <- data_k1$average.price[data_k1$booking.status == "Not_Canceled"]
+#ας το δω ομως και γραφικά #qqplots
+par(mfrow=c(1,2))
+qqnorm(groupA , main = "average price for booking status=canceled")
+qqline(groupA)
+qqnorm(groupB, main = "average price for booking status=not canceled")
+qqline(groupB)
+#δεν φαινονται κανονικα ,και outliers και heavytails
+#τα δειγματα ομως ειναι μεγαλα
+n1<-length(groupA);n1 #n1=678 >50
+n2<-length(groupB);n2 #n2=1320 >50
+#οποτε τώρα θα τσεκάρουμε αν ο μέσος είναι κατάλληλο μετρο περιγραφής της κεντρικής θέσης και για τις 2 ομάδες:
+mean_median_skew_kurt(groupA)
+mean_median_skew_kurt(groupB)
+par(mfrow=c(1,1))
+boxplot(data_k1$average.price~data_k1$booking.status,  main="relation between average price and booking status ",las=1,
+        ylab="average price",col=c("lightblue","cornflowerblue"))
+# μπορω να θεωρησω οτι ειναι καταλληλο μετρο περιγραφης της κεντικής θέσης και να παω παραμετρικα
+var.test(data_k1$average.price ~data_k1$booking.status,center=mean) #p-value = 9.572e-06 -->απορριπτω υποθεση ισων διακυμανσεων
+t.test(data_k1$average.price ~data_k1$booking.status,var.equal=F) #p-value = 2.671e-14-->απορριπτω υποθεση της ΜΗ διαφορας μεσων τιμων στα δυο γκρουπ με ανισες διακυμανσεις
+#αρα θεωρω οτι υπάρχει διαφορα στους μέσουν , αρα θεωρω οτι το αν ακυρωθει η όχι η κρατηση εχει να κανει με την μεση τιμη της κρατησης , πιθανο να επηρεάζει
+#θα κάνω και error bar ανα ομάδα για να το δω
+##If two bars have non-overlapping error bars, it suggests that the means of those groups are significantly different from each other
+plotmeans(data_k1$average.price ~data_k1$booking.status,data=data_k1,connect=F ,ylab="average price",xlab = "booking status",
+          main="Error bar of Average Price Grouped by booking status Levels")
+
+
+
+
+#lead time + booking status
+lillie.test(aov(data_k1$lead.time~ data_k1$booking.status)$res)#normality rejected#p-value < 2.2e-16--> Ho rejected
+shapiro.test(aov(data_k1$lead.time~ data_k1$booking.status)$res)#normality rejected#p-value < 2.2e-16--> Ho rejected
+by(data_k1$lead.time, data_k1$booking.status, lillie.test) #p-value < 2.2e-16--> Ho rejected --> rejected the hypothesis of normality in each group
+by(data_k1$lead.time, data_k1$booking.status, shapiro.test)#p-value < 2.2e-16--> Ho rejected --> rejected the hypothesis of normality in each group
+#we have to do with 2 independents samples ( 1 ποσοτική , 1 δίτιμη )
+groupA <- data_k1$lead.time[data_k1$booking.status == "Canceled" ]
+groupB <- data_k1$lead.time[data_k1$booking.status == "Not_Canceled"]
+#ας το δω ομως και γραφικά #qqplots
+par(mfrow=c(1,2))
+qqnorm(groupA , main = " lead time for booking status=canceled")
+qqline(groupA)
+qqnorm(groupB, main = " lead time for booking status=not canceled")
+qqline(groupB)
+#δεν φαινονται κανονικα ,και outliers και heavytails
+#τα δειγματα ομως ειναι μεγαλα
+n1<-length(groupA);n1 #n1=678 >50
+n2<-length(groupB);n2 #n2=1320 >50
+#οποτε τώρα θα τσεκάρουμε αν ο μέσος είναι κατάλληλο μετρο περιγραφής της κεντρικής θέσης και για τις 2 ομάδες:
+mean_median_skew_kurt(groupA)
+mean_median_skew_kurt(groupB)
+par(mfrow=c(1,1))
+boxplot(data_k1$lead.time~data_k1$booking.status,  main="Boxplot of lead time Grouped by booking status Levels",las=1,
+        ylab=" lead time",col=c("lightblue","cornflowerblue"), xlab = "booking status")
+# ΔΕΝ μπορω να θεωρησω οτι ειναι καταλληλο μετρο περιγραφης της κεντικής θέσης οποτε παω ΜΗ παραμετρικα
+wilcox.test(data_k1$lead.time~data_k1$booking.status, mu=0)# p-value < 2.2e-16< a --> Ho rejected
+#REJECT THAT The MEDIAN not difference on the lead time between the two BOOKING STATUS .Υπάρχει σημαντική διαφορα
+#ARA ΘΕΩΡΩ πιθανο να επηρεάζει
+
+
+# special requests + booking status
+by(data_k1$special.requests, data_k1$booking.status, lillie.test) #p-value < 2.2e-16--> Ho rejected --> rejected the hypothesis of normality in each group
+by(data_k1$special.requests, data_k1$booking.status, shapiro.test)#p-value < 2.2e-16--> Ho rejected --> rejected the hypothesis of normality in each group
+#we have to do with 2 independents samples ( 1 ποσοτική , 1 δίτιμη )
+groupA <- data_k1$special.requests[data_k1$booking.status == "Canceled" ]
+groupB <- data_k1$special.requests[data_k1$booking.status == "Not_Canceled"]
+#ας το δω ομως και γραφικά #qqplots
+par(mfrow=c(1,2))
+qqnorm(groupA , main = "special requests for booking status=canceled")
+qqline(groupA)
+qqnorm(groupB, main = "special requests for booking status=not canceled")
+qqline(groupB)
+#δεν φαινονται κανονικα ,και outliers και heavytails
+#τα δειγματα ομως ειναι μεγαλα
+n1<-length(groupA);n1 #n1=678 >50
+n2<-length(groupB);n2 #n2=1320 >50
+#οποτε τώρα θα τσεκάρουμε αν ο μέσος είναι κατάλληλο μετρο περιγραφής της κεντρικής θέσης και για τις 2 ομάδες:
+mean_median_skew_kurt(groupA)
+mean_median_skew_kurt(groupB)
+# ΔΕΝ μπορω να θεωρησω οτι ειναι καταλληλο μετρο περιγραφης της κεντικής θέσης οποτε παω ΜΗ παραμετρικα
+wilcox.test(data_k1$special.requests~data_k1$booking.status, mu=0)# p-value < 2.2e-16< a --> Ho rejected
+#REJECT THAT The MEDIAN not difference on the special requests between the two BOOKING STATUS .Υπάρχει σημαντική διαφορα
+#ARA ΘΕΩΡΩ πιθανο να επηρεάζει
+
+
+#categorical + categorical....................................................................................................................
+
+
+
+#booking status + market.segment.type
+tab_<-table(data_k1$booking.status, data_k1$market.segment.type)
+chisq.test(tab_)$expected  # not ok
+chisq.test(tab_,simulate.p.value = T)
+barplot(prop.table(tab_),
+        main = "Proportion of booking status by market segment type ",
+        beside = TRUE,
+        ylim = c(0, 0.6),
+        legend = c("canceled ", "not canceled"),
+        xlab = "market segment type",
+        ylab = "Proportion",
+        col = c("lightblue","cornflowerblue"))
+
+#booking status + car parking space
+tab<-table(data_k1$booking.status, data_k1$car.parking.space)
+chisq.test(tab)$expected  # all ok
+chisq.test(tab, correct=F)
+barplot(prop.table(tab),
+        main = "Proportion of booking status by car parking space ",
+        beside = TRUE,
+        ylim = c(0, 0.8),
+        legend = c("canceled", "not canceled"),
+        xlab = "car parking space",
+        ylab = "Proportion",
+        col = c("lightblue","cornflowerblue"))
+
+
+###############################################################################################################################################################################
+###############################################################################################################################################################################
+###############################################################################################################################################################################
+###############################################################################################################################################################################
+###############################################################################################################################################################################
+# Για να διαλέξω πάνω σε ποιες μεταβλητές θα κάνω explanatory data analysis( κανονικά θα έκανα σε όλες αλλά λόγω του μεγάλου όγκου των μεταβλητών
+#θα κάνω επιλέκτικά) i will Conduct LASSO as a variable selection techniqueγια το μοντέλο που έχει εξαρτημένη μεταβλητη την booking status   .
+
+#Η data_k1$booking.status είναι μια κατηγορική μεταβλητή με δύο επίπεδα, "Canceled" και "Not_Canceled", όπως φαίνεται από την έξοδο της συνάρτησης str().
+#Για να χρησιμοποιηθεί σωστά στη λογιστική παλινδρόμηση με την μέθοδο LASSO, πρέπει να μετατραπεί σε δυαδική αριθμητική μορφή (0 και 1).
+table(data_k1$booking.status)
+describe(data_k1$booking.status)
+str(data_k1$booking.status)
+data_k1$booking.status <- as.numeric(data_k1$booking.status == "Canceled") #το "Canceled" να αντιστοιχεί στο 1 και το "Not_Canceled" στο 0
+
+
+
+library(glmnet) #χρησιμοποιείται για να εφαρμόσει μοντέλα παλινδρόμησης όπως το LASSO και το Ridge Regression.
+
+# Δημιουργία ενός εύρους τιμών λάμδα, χρειάζομαι ισορροπια στο πόσο απλοποιημένο ειναι το μοντέλο και στο να μην εχω ομώς και overfitting
+#Η βέλτιστη τιμή του λάμδα (δηλαδή η τιμή που οδηγεί στο καλύτερο μοντέλο) δεν είναι γνωστή εκ των προτέρων και μπορεί να διαφέρει ανάλογα με το σετ δεδομένων.
+#Επομένως, η εξέταση ενός ευρέος φάσματος τιμών λάμδα επιτρέπει την αναζήτηση της βέλτιστης τιμής μέσα σε αυτό το εύρος.
+#Η χρήση ενός ευρέος φάσματος τιμών λάμδα επιτρέπει την αποτελεσματική εφαρμογή διασταυρωμένης επικύρωσης (cross-validation). Μέσω αυτής της διαδικασίας,
+#μπορούμε να αξιολογήσουμε την απόδοση του μοντέλου για διάφορες τιμές λάμδα και να επιλέξουμε την τιμή που μεγιστοποιεί την προβλεπτική ικανότητα του μοντέλου.
+lambdas <- 10 ^ seq(8, -4, length = 250)
+
+#θα δημιουργήσει έναν πίνακα σχεδιασμού χωρίς τον σταθερό όρο(κατηορια αναφορας) και χωρίς τις στήλες Booking_ID και booking.status και date.of.reservation αφου εφτιαξα την reservation month
+#Αυτός ο πίνακας θα χρησιμοποιηθεί ως οι ανεξάρτητες μεταβλητές στο μοντέλο:
+x_matrix <- model.matrix(~ . - 1 - Booking_ID - date.of.reservation, data = data_k1[, -which(names(data_k1) == "booking.status")])
+head(x_matrix)
+# Ελέγγοσ για NAs και μη αριθμητικά δεδομένα
+#sum(is.na(x_matrix))  # Πρέπει να είναι 0 , ok
+#sapply(x_matrix, is.numeric)  # Πρέπει όλα να είναι TRUE
+
+####################################################################################################################
+
+#Χρησιμοποιώ το LASSO για να εκτιμήσω ποιες μεταβλητές είναι σημαντικές για την πρόβλεψη της κατάστασης κράτησης
+fit_lasso <- glmnet(x_matrix, data_k1$booking.status, alpha = 1, lambda = lambdas, family = "binomial") #Εφαρμογή της Μεθόδου LASSO
+fit_lasso  #Df: Ο αριθμός των μεταβλητών που παραμένουν στο μοντέλο.
+            #%Dev: Το ποσοστό της εξηγημένης διακύμανσης ή η ποιότητα της πρόβλεψης του μοντέλου.
+             #Lambda: Η τιμή του λάμδα που εφαρμόστηκε στο συγκεκριμένο βήμα.
+
+
+# Εκπαίδευση του μοντέλου Lasso
+
+#Εφαρμόζω διασταυρωμένη επικύρωση για να βρω τη βέλτιστη τιμή του λάμδα.(cross validation)
+#η συνάρτηση cv.glmnet από το πακέτο glmnet,  εφαρμόζει αυτόματα διασταυρωμένη επικύρωση για τον εντοπισμό της βέλτιστης τιμής του παραμέτρου lambda για το LASSO regression.
+lasso.cv <- cv.glmnet(x_matrix, data_k1$booking.status, alpha = 1, lambda = lambdas, family = "binomial", type.measure = 'class') #Διασταυρωμένη Επικύρωση
+lasso.cv
+# Plots for laSSO
+par(mfrow=c(1,2))
+plot(lasso.cv, xvar = "lambda", label = TRUE)
+plot(lasso.cv$glmnet.fit, xvar = "lambda")   #επιλέγω το λαμδα οπου με ταδε λαμδα βλεπεις ποσες  μεταβλητές εχουν μεινει
+abline(v=log(c(lasso.cv$lambda.min, lasso.cv$lambda.1se)), lty =2)
+
+
+#Συνοψίζοντας, η επιλογή μεταξύ lambda.min και lambda.1se εξαρτάται από το αν θέλω να εστιάσω περισσότερο
+#στην ακρίβεια του μοντέλου (λαμβάνοντας το lambda.min) ή στην αποφυγή της υπερπροσαρμογής και την βελτίωση της γενίκευσης (προτιμώντας το lambda.1se).
+
+#lambda.min: λ value corresponding to the minimum
+#classification error (might be somewhat sensitive to specific run)
+#lambda.1se: λ value corresponding to the most regularized
+#model within one standard error of the minimum
+# αυτο ειναι k-fold cross validation (for logistic regression)
+#Επιλογή των συντελεστών με την ελάχιστη τιμή λάμδα (lambda.min) και με τη λάμδα που αντιστοιχεί στο 1 standard error (lambda.1se).
+coef(lasso.cv, s = "lambda.min")  #ειναι αμεροληπτο αλλα εχει περισσότερες μεταβλητες αρα  λιγότερο ευελικτο
+lasso.cv$lambda.min
+
+coef(lasso.cv, s = "lambda.1se") #αυτο θα κοιτάξω για να φτιάξω το μοντέλο μου( οερισσοτερο ευλεκτικο ομως και με περισσότερη μεροληψια  )
+lasso.cv$lambda.1se
+
+
+
+##########################################################################################################################
+
+#το μοντελο του προκύπτει απο το λασο :
+model_lasso<- glm(booking.status~  number.of.weekend.nights + car.parking.space+
+                lead.time + market.segment.type + average.price +special.requests  +
+                reservation.month + total.nights, data = data_k1, family = binomial(link = "logit"))
+
+summary(model_lasso)
+
+##########################################################################
+
+n <- nrow(data_k1)
+
+m2 <- step(model_lasso, direction='both', k = log(n)) #BIC : 1822.87
+
+model_after_step <- glm(booking.status ~ car.parking.space +
+                                         lead.time + market.segment.type + average.price + special.requests
+                                       , family = binomial(link = "logit"),
+                                       data = data_k1)
+
+
+summary(model_after_step)
+
+
+
+
+
+################################################################
+#βλέπω οτι σε αυτο το μοντέλο η market.segment.type
+# είναι οριακά να ειναι στατιστικά σημαντικη οποτε θα κάνω 
+# compare nested GLMs - anova(model1, model2, test = xxxx) where xxxx is a character value specifying which test should be used ("F", "Chisq", "LRT").
+#στην δικη μου περιπτωση θα χρησιμοποιήσω he Chi-squared test γιατί is particularly useful for count data or binary data models, such as those that are typical with logistic regression or Poisson regression.
+# (It compares the deviance of the two models to see if the more complex model significantly reduces the residual deviance.)
+
+model_after_step_without_marketsegmenttype <- glm(booking.status ~ car.parking.space +
+                                                       lead.time  + average.price + special.requests
+                                                        , family = binomial(link = "logit"),
+                                                         data = data_k1)
+
+summary(model_after_step_without_marketsegmenttype)
+
+
+
+anova(model_after_step_without_marketsegmenttype,model_after_step,  test = "Chisq")
+#################################################################################################
+
+
+#έλγχοσ γαι πολλυσυγκραμικότηατ
+library(car)
+vif(model_after_step) #οκ GVIF <3.16 για όλες
+
+# έλεγχος για εξαρτηση στις παρατηρησεις
+par(mfrow=c(1,1))
+
+# Υπολογίζω τα standardized residuals από το μοντέλο
+std_res <- rstandard(model_after_step, type='deviance')
+
+#  scatter plot χρησιμοποιώντας ως άξονα x τον αριθμό των παρατηρήσεων και ως άξονα y τα standardized residuals
+scatter.smooth(x=1:length(std_res), y=std_res, col='gray', main="Standardized Residuals for Logistic Regression Model")
+
+
+###############################################################################################################################################
+
+library(aod)
+wald.test(b = coef(model_after_step), Sigma = vcov(model_after_step), Terms = 2)
+
+wald.test(b = coef(model_after_step), Sigma = vcov(model_after_step), Terms = 4)
+
+# αλλα και η έξοδος της συνάρτησης summary() για ένα μοντέλο γενικευμένης γραμμικής παλινδρόμησης (GLM) στο R περιλαμβάνει τα p-values
+#για τους συντελεστές του μοντέλου, τα οποία υπολογίζονται με τη χρήση του Wald test. οποτε μπορω να κοιταξω απλως το summary 
+
+
+###########################################################################################################################################
+
+# GOF tests
+with(m2, pchisq(deviance, df.residual, lower.tail = FALSE))
+##########################################################################################################
+
+# Υπολογισμός του McFadden's Pseudo R²
+with(summary(model_after_step),1- deviance/null.deviance)
+
+#######################################################################################
+
+#η πιθανοφάνεια 
+
+logLik(model_after_step)
+
+null_model <- glm(booking.status ~ 1, family = binomial(link = "logit"), data = data_k1)
+
+logLik(null_model)
+
+#Η λογαριθμική πιθανοφάνεια (log likelihood) μετρά την πιθανότητα των παρατηρούμενων δεδομένων υπό το δοθέν μοντέλο,
+#με μεγαλύτερες τιμές να δείχνουν καλύτερη προσαρμογή του μοντέλου στα δεδομένα.
+
+#Το συμπέρασμα είναι ότι το model_after_step, το οποίο περιλαμβάνει πολλαπλούς προβλέποντες, προσφέρει σημαντικά
+#καλύτερη προσαρμογή στα δεδομένα σε σύγκριση με το null_model που περιέχει μόνο τον σταθερό όρο.
+#Η μεγάλη διαφορά στις λογαριθμικές πιθανοφάνειες μεταξύ των δύο μοντέλων υποδηλώνει ότι οι προστιθέμενες μεταβλητές στο model_after_step συμβάλλουν
+#σημαντικά στην εξήγηση της πιθανότητας ακύρωσης των κρατήσεων. Αυτό επιβεβαιώνει την αξία της χρήσης πρόσθετων εξηγητικών μεταβλητών στην ανάλυση πέρα από ένα απλούστερο μοντέλο.
+
+#ο λόγος των δύο πιθανοφανειών (log likelihoods) από δύο μοντέλα συχνά χρησιμοποιείται για να δημιουργήσει ένα μέτρο που ονομάζεται "Likelihood Ratio Test" (LRT) ή Τεστ Αναλογίας Πιθανοφανειών.
+#Αυτός ο έλεγχος συγκρίνει την πιθανοφάνεια δύο μοντέλων για να διαπιστώσει αν το πιο πολύπλοκο μοντέλο προσφέρει στατιστικά σημαντικά καλύτερη προσαρμογή στα δεδομένα σε σύγκριση με το πιο απλό μοντέλο.
+#  Likelihood Ratio Test
+lrt_result <- anova(null_model, model_after_step, test = "Chisq")
+#ή αυτο το ιδιο ειναι
+library(lmtest)
+lrtest(null_model, model_after_step)
+
+########################################################################################################
+
+
+
+#Διάγραμμα των Standardized Residuals ενάντια στις Fitted Values
+fitted_values <- fitted(m2) # Προβλεπόμενες τιμές από το μοντέλο - οχι για αυτη την εργασια το να έχω καλη προβλεψη 
+residuals <- residuals(m2, type = "pearson") # Pearson residuals
+
+
+par(mfrow=c(1,2))
+
+#Διάγραμμα των Standardized Residuals ενάντια στις Fitted Values: Βοηθάει στην ανίχνευση τυχόν μη γραμμικότητας, ετεροσκεδαστικότητας
+#(δηλαδή διαφορετικής διακύμανσης των υπολειμμάτων σε διάφορες τιμές της εξαρτημένης μεταβλητής) ή εξάρτησης μεταξύ των υπολειμμάτων.
+plot(fitted_values, residuals, main = "Plot of Pearson residuals vs. Fitted Values", xlab = "Fitted Values", ylab = "Standardized Residuals")
+abline(h = 0, col = "red")
+
+
+library(arm)
+binnedplot(fitted(model_after_step),
+           residuals(model_after_step, type = "response"),
+           nclass = NULL,
+           xlab = "Expected Values",
+           ylab = "Average residual",
+           main = "Binned residual plot",
+           cex.pts = 0.8,
+           col.pts = 1,
+           col.int = "gray")
+
+#Normal QQ Plot:
+qqnorm(residuals)
+qqline(residuals)
+
+#____________________________________________________________________________________________________________________________________
+
+
+#Διαγράμματα των Standardized Residuals ενάντια σε κάθε Predictor Variable
+
+# Plot for 'average.price'
+plot(data_k1$average.price, residuals, xlab = "average.price", ylab = "Standardized Residuals", main = "Plot of Standardized Residuals vs. Average Price")
+abline(h = 0, col = "red")
+# Ideally, the residuals should show no pattern with respect to the average price, suggesting that the model accounts well for this predictor. Any visible pattern could suggest the need for model refinement
+# Create the binned residual plot for 'average.price'
+binnedplot(data_k1$average.price,
+           residuals,
+           xlab = "Average Price",
+           ylab = "Average residual",
+           main = "Binned Residual Plot for Average Price",
+           cex.pts = 0.8,
+           col.pts = 1,
+           col.int = "gray")
+
+
+
+# Boxplot for 'car.parking.space'
+boxplot(residuals ~ data_k1$car.parking.space, xlab = "car.parking.space", ylab = "Standardized Residuals", main = "Boxplot of Standardized Residuals by Car Parking Space")
+
+# Plot for 'lead.time'
+plot(data_k1$lead.time, residuals, xlab = "lead.time", ylab = "Standardized Residuals", main = "Plot of Standardized Residuals vs. Lead Time")
+abline(h = 0, col = "red")
+
+
+# Boxplot for 'market.segment.type'
+boxplot(residuals ~ data_k1$market.segment.type, xlab = "market.segment.type", ylab = "Standardized Residuals", main = "Boxplot of Standardized Residuals by Market Segment Type")
+
+# Plot for 'special.requests'
+plot(data_k1$special.requests, residuals, xlab = "special.requests", ylab = "Standardized Residuals", main = "Plot of Standardized Residuals vs. Special Requests")
+abline(h = 0, col = "red")
+
+
+library(car)
+par(mfrow=c(1,1))
+
+# Δημιουργία διαγραμμάτων επιρροής
+influencePlot(model_after_step, id.method="identify", main="Influence Plot",
+              sub="Bubble sizes are proportional to Cook's Distances")
+
+
+par(mfrow=c(2,2))
+plot( model_after_step , pch=16, cex=2, col='blue', add.smooth=F, which=3)
+plot( model_after_step , pch=16, cex=2, col='blue', which=4)
+abline(h=4/5, col='red', lty=2, lwd=2)
+plot( model_after_step, pch=16, cex=2, col='blue', which=5)
+plot( model_after_step, pch=16, cex=2, col='blue', which=6)
+
+
+
+#######################################################################################################################################
+# Υπολογισμός των odds ratios και των 95% confidence intervals
+coef_estimates <- coef(summary(model_after_step))
+odds_ratios <- exp(coef_estimates[, "Estimate"])
+lower_95 <- exp(coef_estimates[, "Estimate"] - 1.96 * coef_estimates[, "Std. Error"]) #κρίσιμη τιμή 1.96 για το 95% διάστημα εμπιστοσύνης,
+upper_95 <- exp(coef_estimates[, "Estimate"] + 1.96 * coef_estimates[, "Std. Error"])
+
+# Εμφάνιση των odds ratios με τα αντίστοιχα confidence intervals
+odds_ratio_df <- data.frame(Estimate = odds_ratios, Lower_95_CI = lower_95, Upper_95_CI = upper_95)
+odds_ratio_df
+
+library(sjPlot)
+tab_model(model_after_step)
+
+###############################################################################################################################################
+
+
+#install.packages("ggplot2")
+library(ggplot2)
+
+# Διάγραμμα για το average.price
+ggplot(data_k1, aes(x = average.price, y = booking.status)) +
+  geom_point(alpha = 0.5) +  # Προσθήκη διαφάνειας στα σημεία
+  stat_smooth(method = "glm", method.args = list(family = binomial()), se = TRUE, color = "blue") +
+  xlab("Average Price") +
+  ylab("Probability of Cancellation") +
+  ggtitle("Effect of Average Price on Cancellation Probability") +
+  theme_minimal() +  # Χρήση ενός πιο σύγχρονου θέματος
+  theme(plot.title = element_text(hjust = 0.5))
+
+# Διάγραμμα για το lead.time
+ggplot(data_k1, aes(x = lead.time, y = booking.status)) +
+  geom_point(alpha = 0.5) +
+  stat_smooth(method = "glm", method.args = list(family = binomial()), se = TRUE, color = "blue") +
+  xlab("Lead Time") +
+  ylab("Probability of Cancellation") +
+  ggtitle("Effect of Lead Time on Cancellation Probability") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+
+#----------------------
+# Διάγραμμα για το special.requests
+ggplot(data_k1, aes(x = special.requests, y = booking.status)) +
+  geom_point(alpha = 0.5) +
+  stat_smooth(method = "glm", method.args = list(family = binomial()), se = TRUE, color = "blue") +
+  xlab("Special Requests") +
+  ylab("Probability of Cancellation") +
+  ggtitle("Effect of Special Requests on Cancellation Probability") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+# Για το διάγραμμα των Special Requests
+ggplot(data_k1, aes(x = factor(special.requests), y = booking.status, color = factor(special.requests))) +
+  geom_jitter(position = position_jitter(width = 0.2), alpha = 0.5) +
+  stat_smooth(method = "glm", method.args = list(family = binomial()), se = TRUE, color = "blue") +
+  labs(x = "Special Requests", y = "Probability of Cancellation", color = "Number of Special Requests") +
+  ggtitle("Probability of Cancellation by Special Requests") +
+  scale_color_manual(values = c("lightsteelblue2","orchid3" , "turquoise", "red", "blue" )) +  # Ορισμός χειροκίνητων χρωμάτων
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5), legend.position = "right")
+
+
+# Για το διάγραμμα του Car Parking Space
+ggplot(data_k1, aes(x = factor(car.parking.space), y = booking.status, color = factor(car.parking.space))) +
+  geom_jitter(position = position_jitter(width = 0.2), alpha = 0.5) +
+  stat_smooth(method = "glm", method.args = list(family = binomial()), se = TRUE, color = "red") +
+  labs(x = "Car Parking Space", y = "Probability of Cancellation", color = "Car Parking Space") +
+  ggtitle("Probability of Cancellation by Car Parking Space") +
+  scale_color_manual(values = c("orchid3" , "blue" )) +  # Ορισμός χειροκίνητων χρωμάτων
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5), legend.position = "right")
+
+#colors()
+
+#________________________________
+
+# Διάγραμμα για average price με car parking space
+ggplot(data=data_k1, aes(y=booking.status, x=average.price, color=factor(car.parking.space))) +
+  geom_point(alpha=0.2) +
+  stat_smooth(method="glm", se=FALSE, method.args = list(family=binomial)) +
+  labs(
+    x = "Average Price",
+    y = "Booking Status = Canceled",
+    color = "Car Parking Space",
+    title = "Effect of Average Price and Parking Space Demand on Booking Cancellation Probability"
+  ) +
+  scale_color_manual(values = c("red", "blue")) +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+# Διάγραμμα για lead time με car parking space
+ggplot(data=data_k1, aes(y=booking.status, x=lead.time, color=factor(car.parking.space))) +
+  geom_point(alpha=0.2) +
+  stat_smooth(method="glm", se=FALSE, method.args = list(family=binomial)) +
+  labs(
+    x = "Lead Time",
+    y = "Booking Status = Canceled",
+    color = "Car Parking Space",
+    title = "Effect of Lead Time and Parking Space on Cancellation Probability"
+  ) +
+  scale_color_manual(values = c("red", "blue")) +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+# Διάγραμμα για average price με market segment type
+ggplot(data=data_k1, aes(y=booking.status, x=average.price, color=factor(market.segment.type))) +
+  geom_point(alpha=0.2) +
+  stat_smooth(method="glm", se=FALSE, method.args = list(family=binomial)) +
+  labs(
+    x = "Average Price",
+    y = "Booking Status = Canceled",
+    color = "Market Segment Type",
+    title = "Effect of Market Segment Type and Average Price on Cancellation Probability"
+  ) +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+# Διάγραμμα για special requests με car parking space
+ggplot(data=data_k1, aes(y=booking.status, x=special.requests, color=factor(car.parking.space))) +
+  geom_point(alpha=0.2) +
+  stat_smooth(method="glm", se=FALSE, method.args = list(family=binomial)) +
+  labs(
+    x = "Special Requests",
+    y = "Booking Status = Canceled",
+    color = "Car Parking Space",
+    title = "Effect of Special Requests and Car Parking Space on Cancellation Probability"
+  ) +
+  scale_color_manual(values = c("red", "blue")) +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+
+#######################################################################################################################
+
+model_summary <- summary(model_after_step)
+# Υπολογισμός τυποποιημένων συντελεστών 
+standardized_coefficients <- model_summary$coefficients[, "Estimate"] / model_summary$coefficients[, "Std. Error"]
+
+# Δημιουργία δεδομένων για το διάγραμμα σημαντικότητας
+variable_importance <- data.frame(
+  Variable = rownames(model_summary$coefficients),
+  Importance = abs(standardized_coefficients)  # Χρησιμοποίηση του τυποποιημένου συντελεστή
+)
+
+# Διαγραμμα σημαντικότητας μεταβλητών
+ggplot(variable_importance, aes(x = reorder(Variable, Importance), y = Importance)) +
+  geom_col(fill = "cornflowerblue") +  # Ορίζουμε το χρώμα των στηλών σε μπλε
+  coord_flip() +  # Αναστροφή των αξόνων για καλύτερη ανάγνωση
+  xlab("Variable") +
+  ylab("Standardized Coefficient") +
+  ggtitle("Variable Importance based on Standardized GLM Coefficients") +
+  theme_minimal() +  # Σύγχρονο θέμα
+  theme(plot.title = element_text(hjust = 0.5))
+
+
+###########################################################################################################################
+
+
+
+
+
+
+

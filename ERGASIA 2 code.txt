@@ -1,0 +1,1185 @@
+#ELENI RALLI 05/03/2024
+
+library(dplyr)
+library(lubridate)  #για τις ημερομηνιες
+library(sjPlot)
+library(foreign)
+library(psych)      # for the describe function
+library(DescTools)  # to calculate the mode
+library(corrplot)   #for the corrplot
+library(nortest) # for lillie.test
+library(gplots)   # for error bars
+library(gmodels)  #for cross table
+library(glmnet)
+library(MASS)
+
+
+#file.choose()
+library(readxl)
+data_k1<- read_excel("D:\\karlis\\project2.xlsx")
+head(data_k1)
+str(data_k1)
+#######################################################################################################################################################################################
+sum(is.na(data_k1)) # ΔΕΝ ΥΠΑΡΧΟΥΝ τιμές ειναι στο dataset NA
+
+data_k1$date.of.reservation  # κάποιες ημερομηνίες είναι σε μορφή "43442",κάποιες σε "8/24/2018" όποτε θα εφαρμοσω κατι σαν αυτο as.Date(43016, origin = "1899-12-30") στο exclel "2017-10-08"
+#data_k1$date.of.reservation [1]  π.χ. as.Date(data_k1$date.of.reservation [1], origin = "1899-12-30")
+
+
+# Μετατροπή των αριθμητικών και κειμενικών ημερομηνιών
+data_k1$date.of.reservation <- lapply(data_k1$date.of.reservation, function(x) {
+  if(grepl("^\\d+$", x)) {
+    return(as.Date(as.numeric(x), origin = "1899-12-30"))
+  } else {
+    return(mdy(x))
+  }
+})
+
+# Μετατροπή της λίστας πίσω σε διάνυσμα
+data_k1$date.of.reservation <- do.call(c, data_k1$date.of.reservation)
+
+# Επανατροπή του αποτελέσματος σε τύπο Date, αν χρειάζεται
+data_k1$date.of.reservation <- as.Date(data_k1$date.of.reservation)
+
+# Επιβεβαιώνω ότι τώρα όλες οι ημερομηνίες είναι στην κατάλληλη μορφή
+head(data_k1$date.of.reservation)
+
+sum(is.na(data_k1)) # τώρα  ΥΠΑΡΧΟΥΝ τιμές  στο dataset NA και ειναι οι 29 φεβρουαριου οποτε θα τις κανμω 1 μαρτιου
+# και το ξέρω γιατι οταν τρέχω το παρακατω προκυπτουν 2 ΝΑ
+
+# Εύρεση NA σε κάθε στήλη
+na_columns <- sapply(data_k1, function(x) sum(is.na(x)))
+
+# Εμφάνιση των στηλών που έχουν NA τιμές και τον αριθμό τους
+print(na_columns[na_columns > 0])
+
+# Εύρεση παρατηρήσεων (σειρών) με NA σε οποιαδήποτε στήλη
+na_rows <- apply(data_k1, 1, function(x) any(is.na(x)))
+
+# Εμφάνιση των αριθμών των σειρών που έχουν NA τιμές
+which(na_rows)
+
+# Μέτρηση των ημερομηνιών που είναι 29 Φεβρουαρίου
+initial_count <- sum(format(data_k1$date.of.reservation, "%m-%d") == "02-29", na.rm = TRUE)
+initial_count  # ολα καλα δεν υπαρχουν an εχω na.rm = TRUE
+
+# Παράδειγμα: Μετατροπή της πρώτης NA τιμής σε 1 Μαρτίου 2020
+na_positions <- which(is.na(data_k1$date.of.reservation))  # Εύρεσησης των NA τιμών που θα μετατραπούν
+# Ας υποθέσουμε ότι θέλουμε να μετατρέψουμε όλες τις NA τιμές σε 1 Μαρτίου του 2020 για απλότητα
+
+# Μετατροπή των NA σε 1 Μαρτίου 2020
+for(pos in na_positions) {
+  data_k1$date.of.reservation[pos] <- as.Date("2020-03-01")
+}
+
+# Επανατροπή του αποτελέσματος σε τύπο Date, αν χρειάζεται
+data_k1$date.of.reservation <- as.Date(data_k1$date.of.reservation)
+
+# Ελέγχουμε τις πρώτες ημερομηνίες για επιβεβαίωση
+head(data_k1$date.of.reservation)
+
+
+str(data_k1)
+
+##########################################################################################################################################################################
+#φτιαξιμο  των μεταβλητών στην μορφη που θέλουμε
+data_k1$average.price <- as.numeric(data_k1$average.price)
+data_k1$reservation.month <- format(as.Date(data_k1$date.of.reservation), "%m")
+###########################################################################################################################################################################
+#φτιαξιμο  των κανουργιων  μεταβλητων
+
+# Υπολογισμός συνολικού αριθμού επισκεπτών
+data_k1$total.guests <- data_k1$number.of.adults + data_k1$number.of.children
+
+# Υπολογισμός συνολικού αριθμού διανυκτερεύσεων
+data_k1$total.nights <- data_k1$number.of.weekend.nights + data_k1$number.of.week.nights
+
+# Μετατροπή της ημερομηνίας κράτησης σε μήνα
+data_k1$reservation.month <- format(as.Date(data_k1$date.of.reservation), "%m")
+##########################################################################################################################################################################
+
+str(data_k1) #ok
+lapply(data_k1, unique) # για να δω ποιες θα μετρατρέψω σε κατηγορικές
+
+############################################################################################################################################################################
+# οι παρακάτω μεταβλητές φαίνεται να είναι κατάλληλες για μετατροπή σε κατηγορικές:
+
+#type.of.meal: Με μόνο τέσσερις μοναδικές τιμές, αυτή η μεταβλητή είναι κατάλληλη για μετατροπή σε κατηγορική.
+data_k1$type.of.meal <- as.factor(data_k1$type.of.meal)
+
+#car.parking.space: Εφόσον έχει μόνο δύο τιμές (0 και 1), αυτή είναι κλασική δυαδική κατηγορική μεταβλητή.
+data_k1$car.parking.space <- as.factor(data_k1$car.parking.space)
+
+#room.type: Ανάλογα με τον αριθμό των μοναδικών τιμών, αυτή η μεταβλητή μπορεί να χειριστεί ως κατηγορική.
+data_k1$room.type <- as.factor(data_k1$room.type)
+
+#market.segment.type: Έχει πέντε μοναδικές τιμές και είναι κατάλληλη για μετατροπή σε κατηγορική.
+data_k1$market.segment.type <- as.factor(data_k1$market.segment.type)
+
+#repeated: Με δύο τιμές (0 και 1), αυτή είναι κατάλληλη ως δυαδική κατηγορική μεταβλητή.
+data_k1$repeated <- as.factor(data_k1$repeated)
+
+#booking.status: Με μόνο δύο τιμές ("Not_Canceled" και "Canceled"), αυτή είναι κατάλληλη ως δυαδική κατηγορική μεταβλητή.
+data_k1$booking.status <- as.factor(data_k1$booking.status)
+
+#reservation.month: Μπορεί να χειριστεί ως κατηγορική, αν και είναι αριθμητική, αφού αντιπροσωπεύει τους μήνες.
+data_k1$reservation.month <- as.factor(data_k1$reservation.month)
+
+
+
+str(data_k1)
+###############################################################################################################################################################################
+###############################################################################################################################################################################
+###############################################################################################################################################################################
+###############################################################################################################################################################################
+###############################################################################################################################################################################
+###############################################################################################################################################################################
+#Συντομη περιγραφική στατιστική:
+#---------------------------------
+
+
+# Δημιουργία νέου dataframe μόνο με τις numeric στήλες
+data_k1_num<- data_k1[sapply(data_k1, is.numeric)]
+str(data_k1_num)
+
+summary(data_k1_num)
+describe(data_k1_num)
+
+
+#i will create this function to check quickly all these
+mean_median_skew_kurt <- function(data_vector) {
+  if (!is.numeric(data_vector)) {
+    stop("Data vector is not numeric.")
+  }
+
+  results <- list(
+    Mean = mean(data_vector, na.rm = TRUE),
+    Median = median(data_vector, na.rm = TRUE),
+    Skewness = skewness(data_vector, na.rm = TRUE),
+    Kurtosis = kurtosis(data_vector, na.rm = TRUE)
+  )
+
+  print(results)
+
+}
+
+mean_median_skew_kurt(data_k1_num$number.of.adults)
+mean_median_skew_kurt(data_k1_num$number.of.children)
+mean_median_skew_kurt(data_k1_num$number.of.weekend.nights)
+mean_median_skew_kurt(data_k1_num$number.of.week.nights)
+mean_median_skew_kurt(data_k1_num$lead.time)
+mean_median_skew_kurt(data_k1_num$P.C)
+mean_median_skew_kurt(data_k1_num$P.not.C)
+mean_median_skew_kurt(data_k1_num$average.price)
+mean_median_skew_kurt(data_k1_num$special.requests)
+mean_median_skew_kurt(data_k1_num$total.guests)
+mean_median_skew_kurt(data_k1_num$total.nights)
+
+#standard deviation
+sapply(data_k1_num[c("number.of.adults", "number.of.children", "number.of.weekend.nights", "number.of.week.nights",
+                     "lead.time", "P.C", "P.not.C", "average.price", "special.requests", "total.guests", "total.nights")],
+       function(x) round(sd(x), 0))
+
+
+par(mfrow=c(1,2))
+
+
+# stick plot for total.guests using plot and relative frequency
+x <- data_k1$total.guests
+n <- length(x)
+relative_freq <- table(x) / n
+plot(relative_freq, type='h', xlim=range(x) + c(-1, 1), main="Stick Plot for total guests",xlab="total guests", ylab="Relative Frequency", col="cornflowerblue")
+
+# Stick plot for Number of Total Nights
+x_total_nights <- data_k1$total.nights
+n_total_nights <- length(x_total_nights)
+relative_freq_total_nights <- table(x_total_nights) / n_total_nights
+plot(relative_freq_total_nights, type='h', xlim=range(x_total_nights) + c(-1, 1), main="Stick Plot for Number of Total Nights", xlab="Number of Total Nights", ylab="Relative Frequency", col="cornflowerblue")
+
+# Stick plot for Lead Time
+x_lead_time <- data_k1$lead.time
+n_lead_time <- length(x_lead_time)
+relative_freq_lead_time <- table(x_lead_time) / n_lead_time
+plot(relative_freq_lead_time, type='h', xlim=range(x_lead_time) + c(-1, 1), main="Stick Plot for Lead Time", xlab="Lead Time", ylab="Relative Frequency", col="cornflowerblue")
+
+# Stick plot for Number of Week Nights
+x_week_nights <- data_k1$number.of.week.nights
+n_week_nights <- length(x_week_nights)
+relative_freq_week_nights <- table(x_week_nights) / n_week_nights
+plot(relative_freq_week_nights, type='h', xlim=range(x_week_nights) + c(-1, 1), main="Stick Plot for Number of Week Nights", xlab="Number of Week Nights", ylab="Relative Frequency", col="cornflowerblue")
+
+# Histogram and normal curve for average.price
+x <- data_k1$average.price
+m <- mean(x); s <- sd(x)
+hist(x, probability = T, main = "Histogram for Number of average price", xlab="average price", ylab="Probability Density", col="cornflowerblue")
+curve(dnorm(x, m, s), add=T, lwd=2)
+
+
+# Stick plot for Special Requests
+x_special_requests <- data_k1$special.requests
+n_special_requests <- length(x_special_requests)
+relative_freq_special_requests <- table(x_special_requests) / n_special_requests
+plot(relative_freq_special_requests, type='h', xlim=range(x_special_requests) + c(-1, 1), main="Stick Plot for Special Requests", xlab="Special Requests", ylab="Relative Frequency", col="cornflowerblue")
+
+
+##############################
+#normality tests + qqplots
+
+# Adjusting the plot area to accommodate six Q-Q plots
+par(mfrow=c(2,3))
+
+# Q-Q Plot for Number of Total Guests
+qqnorm(data_k1_num$total.guests, main = "Normal Q-Q Plot for Number of Total Guests", col = "blue")
+qqline(data_k1_num$total.guests, col = "red")
+
+# Q-Q Plot for Number of Total Nights
+qqnorm(data_k1_num$total.nights, main = "Normal Q-Q Plot for Number of Total Nights", col = "blue")
+qqline(data_k1_num$total.nights, col = "red")
+
+# Q-Q Plot for Lead Time
+qqnorm(data_k1_num$lead.time, main = "Normal Q-Q Plot for Lead Time", col = "blue")
+qqline(data_k1_num$lead.time, col = "red")
+
+# Q-Q Plot for Number of Week Nights
+qqnorm(data_k1_num$number.of.week.nights, main = "Normal Q-Q Plot for Number of Week Nights", col = "blue")
+qqline(data_k1_num$number.of.week.nights, col = "red")
+
+# Q-Q Plot for Average Price
+qqnorm(data_k1_num$average.price, main = "Normal Q-Q Plot for Average Price", col = "blue")
+qqline(data_k1_num$average.price, col = "red")
+
+# Q-Q Plot for Special Requests
+qqnorm(data_k1_num$special.requests, main = "Normal Q-Q Plot for Special Requests", col = "blue")
+qqline(data_k1_num$special.requests, col = "red")
+
+# Resetting the plot layout
+par(mfrow=c(1,1))
+
+# Shapiro-Wilk Test for normality assessment
+shapiro.test(data_k1_num$total.guests)
+shapiro.test(data_k1_num$total.nights)
+shapiro.test(data_k1_num$lead.time)
+shapiro.test(data_k1_num$number.of.week.nights)
+shapiro.test(data_k1_num$average.price)
+shapiro.test(data_k1_num$special.requests)
+
+
+lillie.test(data_k1_num$total.guests)
+lillie.test(data_k1_num$total.nights)
+lillie.test(data_k1_num$lead.time)
+lillie.test(data_k1_num$number.of.week.nights)
+lillie.test(data_k1_num$average.price)
+lillie.test(data_k1_num$special.requests)
+
+
+##################################################
+#we will examine 3 categorical variables market.segment.type  and  reservation.month
+
+
+describe(data_k1$market.segment.type)
+describe(data_k1$reservation.month)
+describe(data_k1$booking.status)
+
+
+#Visual Analysis for factors  not all just ExterQual, BsmtQual , Kitchen.Qual  # μπορείς και πίνακες για συχνότητες
+data_k1$market.segment.type
+data_k1$reservation.month
+data_k1$booking.status
+
+par(mfrow=c(1,3))
+# Bar plot for Market Segment Type Frequencies
+barplot(table(data_k1$market.segment.type),
+        cex.lab=0.9, las=1,
+        main = "Market Segment Type Frequencies",
+        xlab="Market Segment Type",
+        ylab="Frequency",
+        col="cornflowerblue")
+
+# Bar plot for Reservation Month Frequencies
+barplot(table(data_k1$reservation.month),
+        cex.lab=0.9, las=1,
+        main = "Reservation Month Frequencies",
+        xlab="Reservation Month",
+        ylab="Frequency",
+        col="cornflowerblue")
+
+# Bar plot for Booking Status Frequencies
+barplot(table(data_k1$booking.status),
+        cex.lab=0.9, las=1,
+        main = "Booking Status Frequencies",
+        xlab="Booking Status",
+        ylab="Frequency",
+        col="cornflowerblue")
+#colors()
+
+table(data_k1$market.segment.type)
+round(prop.table(table(data_k1$market.segment.type)),1)
+table(data_k1$reservation.month)
+round(prop.table(table(data_k1$reservation.month)),1)
+table(data_k1$booking.status)
+round(prop.table(table(data_k1$booking.status)),1)
+
+
+##########################################################################################################################################################################################################################################
+##########################################################################################################################################################################################################################################
+##########################################################################################################################################################################################################################################
+##########################################################################################################################################################################################################################################
+##########################################################################################################################################################################################################################################
+##########################################################################################################################################################################################################################################
+##########################################################################################################################################################################################################################################
+##########################################################################################################################################################################################################################################
+##########################################################################################################################################################################################################################################
+##########################################################################################################################################################################################################################################
+##########################################################################################################################################################################################################################################
+##########################################################################################################################################################################################################################################
+##########################################################################################################################################################################################################################################
+##########################################################################################################################################################################################################################################
+##########################################################################################################################################################################################################################################
+##########################################################################################################################################################################################################################################
+##########################################################################################################################################################################################################################################
+##########################################################################################################################################################################################################################################
+##########################################################################################################################################################################################################################################
+##########################################################################################################################################################################################################################################
+##########################################################################################################################################################################################################################################
+##########################################################################################################################################################################################################################################
+##########################################################################################################################################################################################################################################
+##########################################################################################################################################################################################################################################
+##########################################################################################################################################################################################################################################
+##########################################################################################################################################################################################################################################
+##########################################################################################################################################################################################################################################
+##########################################################################################################################################################################################################################################
+##########################################################################################################################################################################################################################################
+##########################################################################################################################################################################################################################################
+##########################################################################################################################################################################################################################################
+##########################################################################################################################################################################################################################################
+##########################################################################################################################################################################################################################################
+##########################################################################################################################################################################################################################################
+##########################################################################################################################################################################################################################################
+##########################################################################################################################################################################################################################################
+
+library(caret)
+# Exclude the Booking_ID column and split the data
+set.seed(123)
+data_k1_no_id <- data_k1[, !names(data_k1) %in% c("Booking_ID")]
+splitIndex <- createDataPartition(data_k1_no_id$booking.status, p = .80, list = FALSE, times = 1) #to help maintaining the dataset original distribution
+trainData <- data_k1_no_id[splitIndex, ]
+str(trainData)
+testData <- data_k1_no_id[-splitIndex, ]
+
+str(data_k1_no_id)
+
+# Predictive models
+###Machine learning methods###
+##################################################################################################################################
+##################### random forest################################################################################################
+
+library(caret);library(randomForest)
+
+train_control <- trainControl(method = "cv", number = 10)#  10-fold cross-validation
+
+num_vars <- ncol(trainData) - 1
+mtry_values <- round(seq(1, num_vars, length.out = min(10, num_vars)))
+rf_grid <- expand.grid(mtry = mtry_values)
+
+
+set.seed(123)
+
+rf_model <- train(
+  booking.status ~ .,
+  data = trainData,
+  method = "rf",  # τυχαίο δάσοσ
+  trControl = train_control,
+  tuneGrid = rf_grid,
+  ntree = 100  # ένας σταθερόσ αριθμός δέντρων για κάθε δάσος
+)
+
+rf_model# το καλύτερο μοντέλο που βρηκε και οι παραμετροι του
+
+# Αξιολόγηση του μοντέλου_____________________________________________
+
+#  Confusion Matrix
+rf_predictions <- predict(rf_model, newdata = testData)
+confusionMatrixRF <- confusionMatrix(rf_predictions, as.factor(testData$booking.status))
+confusionMatrixRF
+
+# accuracy
+accuracyRF <- confusionMatrixRF$overall['Accuracy']
+accuracyRF
+
+
+#  F1 Score
+f1_rf <- confusionMatrixRF$byClass['F1']
+f1_rf
+
+##################################################################################################################################
+#lasso για varible selection για το svm kai to logistic
+data_k1$booking.status <- as.numeric(data_k1$booking.status == "Canceled") #το "Canceled" να αντιστοιχεί στο 1 και το "Not_Canceled" στο 0
+
+library(glmnet)
+lambdas <- 10 ^ seq(8, -4, length = 250)
+x_matrix <- model.matrix(~ . - 1 - Booking_ID - date.of.reservation, data = data_k1[, -which(names(data_k1) == "booking.status")])
+head(x_matrix)
+fit_lasso <- glmnet(x_matrix, data_k1$booking.status, alpha = 1, lambda = lambdas, family = "binomial") #Εφαρμογή  LASSO
+fit_lasso
+#(cross validation gia to l )
+lasso.cv <- cv.glmnet(x_matrix, data_k1$booking.status, alpha = 1, lambda = lambdas, family = "binomial", type.measure = 'class') #Διασταυρωμένη Επικύρωση
+lasso.cv
+# Plots for laSSO
+par(mfrow=c(1,2))
+plot(lasso.cv, xvar = "lambda", label = TRUE)
+plot(lasso.cv$glmnet.fit, xvar = "lambda")   #επιλέγω το λαμδα οπου με ταδε λαμδα βλεπεις ποσες  μεταβλητές εχουν μεινει
+abline(v=log(c(lasso.cv$lambda.min, lasso.cv$lambda.1se)), lty =2)
+coef(lasso.cv, s = "lambda.min")  #ειναι αμεροληπτο αλλα εχει περισσότερες μεταβλητες αρα  λιγότερο ευελικτο
+lasso.cv$lambda.min
+coef(lasso.cv, s = "lambda.1se") #αυτο κοιτάξω για να φτιάξω το μοντέλο μου( οερισσοτερο ευλεκτικο ομως και με περισσότερη μεροληψια  )
+lasso.cv$lambda.1se
+#_______________________________________________________________________________________________________________
+#το μοντελο του προκύπτει απο το λασο :
+model_lasso<- glm(booking.status~  number.of.weekend.nights + car.parking.space+
+                    lead.time + market.segment.type + average.price +special.requests  +
+                    reservation.month + total.nights, data = data_k1, family = binomial(link = "logit"))
+summary(model_lasso)
+#______________________________________________________________________________________________________________
+n <- nrow(data_k1)
+m2 <- step(model_lasso, direction='both' )
+
+model_after_step <- glm(booking.status ~ number.of.weekend.nights + car.parking.space +
+                          lead.time + market.segment.type + average.price + special.requests
+                        , family = binomial(link = "logit"),
+                        data = data_k1)
+summary(model_after_step)
+
+#έλγχοσ γαι πολλυσυγκραμικότηατ
+library(car)
+vif(model_after_step) #οκ GVIF <3.16 για όλες
+
+##################################################################################################################################
+###SVM Method#######################################################################################################################
+str(data_k1)
+library(caret)
+# Exclude the Booking_ID column and split the data
+set.seed(123)
+data_k1_no_id <- data_k1[, c("booking.status", "number.of.weekend.nights", "car.parking.space", "lead.time", "market.segment.type", "average.price", "special.requests")]
+splitIndex <- createDataPartition(data_k1_no_id$booking.status, p = .80, list = FALSE, times = 1) #to help maintaining the dataset original distribution
+trainData <- data_k1_no_id[splitIndex, ]
+str(trainData)
+testData <- data_k1_no_id[-splitIndex, ]
+
+str(data_k1_no_id)
+
+set.seed(123)
+
+library(caret);library(e1071)
+
+trainControl <- trainControl(method = "repeatedcv", number = 10, repeats = 3) #10-fold cross-validation, με 3 επαναλήψεις
+
+svmGrid <- expand.grid(sigma = c(0.001, 0.01, 0.1), C = c(0.1, 1, 10))
+
+trainData$booking.status <- factor(trainData$booking.status, levels = c(0, 1))
+testData$booking.status <- factor(testData$booking.status, levels = c(0, 1))
+
+# εκπαίδευση του  SVM
+set.seed(123)
+svmModel <- train(
+  booking.status ~ .,
+  data = trainData,
+  method = "svmRadial",
+  trControl = trainControl,
+  tuneGrid = svmGrid,
+  preProcess = c("center", "scale")
+)
+
+svmModel
+
+#  confusion matrix
+svmPredictions <- predict(svmModel, newdata = testData) # Προβλέψεις στα δεδομένα ελέγχου
+confusionMatrixSVM <- confusionMatrix(svmPredictions, testData$booking.status)
+confusionMatrixSVM
+
+# accuracy
+accuracySVM <- sum(svmPredictions == testData$booking.status) / nrow(testData)
+accuracySVM
+
+#  F1 Score
+f1_SVM <- confusionMatrixSVM$byClass['F1']
+f1_SVM
+
+####################################################################################################################################################################
+#logistic Regression ################################################################################################################################################
+
+#_______________________________________________________________________________________________________________________
+library(caret);library(pROC)
+
+trainControl <- trainControl(method = "repeatedcv", number = 10, repeats = 3)
+
+
+logisticModel <- train(              # Εκπαίδευση του μοντέλου
+  booking.status ~ .,
+  data = trainData,
+  method = "glm",
+  family = "binomial",
+  trControl = trainControl
+)
+
+logisticModel
+logisticModel$results
+
+
+# Αξιολόγηση του μοντέλου με confusion matrix
+logisticpred <- predict(logisticModel, newdata = testData, type = "raw")
+confusionMatrixlogistic <- confusionMatrix(as.factor(logisticpred), testData$booking.status)
+confusionMatrixlogistic
+
+# accuracy
+accuracyLogistic <- sum(logisticpred == testData$booking.status) / nrow(testData)
+accuracyLogistic
+
+#  F1 Score
+f1_Logistic <- confusionMatrixlogistic$byClass['F1']
+f1_Logistic
+
+
+
+################################################################################################################################
+################################################################################################################################
+#PART2
+################################################################################################################################
+################################################################################################################################
+
+# θα προχωρησω στην ουσια απαντώντας στα παρακάτω ερωτημαρα ( απο τις σημειωσεις Καρλή) :
+
+#1) which method to use :
+#θα κάνω 2 μεθοδους clustering για να δω αν συμφωνουν ( και οι δυο μεθοδοι που θα κανουν θα ειναι hard clustering- ditance methods, ο k means ειναι partion method βασικα )
+# το να συμφωνουν ειναι μια καλή ενδειξη οτι οντως υπαρχουν αυτα τα clusters και δημιουργηθηκαν λόγω του οτι απλώς έτρεξαν οι εντολές και θα δημιουργουσαν ουτως ή αλλως αφου επρεπε να δημιουργηθει κάτι
+#	Hierarchical type of clustering -Agglomerative
+#	Flat type of clustering – K-means( θα κάνω μια παραλάγη του , τον Kmedoits  ) και
+#    i) τι αποσταση να διαλέξω
+#       έχω mix data , συνεπώς δεν μπορω να παρω ευκλειδια ή mahalanobis κλπ
+#       distance (απόσταση) και το similarity (ομοιότητα) είναι στην ουσία συνδεδεμένες έννοιες αλλά αντιπροσωπεύουν αντίθετες ιδέες
+#       θα διαλέξω gower distance , Gower είναι μια μέθοδος για να υπολογίσω πόσο διαφέρουν δύο παρατηρήσεις βάσει πολλαπλών μεταβλητών που μπορεί να είναι και διαφορετικού τύπου (π.χ. τόσο συνεχείς όσο και κατηγορικές)
+#    ii) τι μέθοδο linkage
+#        θα εφαρμοσω μεθοδο ward , γιατι ελαχιστοποιεί το συνολική εσωτερική διακύμανση και δημιουργει συμπαγεις ομαδες .
+
+#Αναμεσα στο K -means( εδω medoit) ΚΑΙ ΤΟ HIERARCHICAL ΠΙΟ ΠΡΟΤΙΜΩ ?
+# TA ιεραρχικα πολλες φορες δινουν χαζες λύσεις οποτε μαλλον τon κ -medoit
+#ισως να χρησιμοπιοισω και μοντέλα προβλεψης για να δω ποσο καλα μπορω να προβλέψω αν ένα δεδομένο ανηκει σε μια συσταδα ή οχι. ( τελικα δεν το εκαννα γιατι η εκφωνηση δεν το απαιτουσε)
+
+#2) how many clusters
+#Επιπλέον
+#ιεραρχικής συσταδοποίησης (hierarchical clustering) πριν από τον αλγόριθμο K-means,
+#συνήθως για να βρω  μια αποτελεσματική μέθοδο για να προσδιορίσει τον αριθμό των συστάδων k που θα χρησιμοποιήσει στο K-means.
+# ΔΕΝ ΕΙΝΑΙ ΚΑΛΗ ΙΔΕΑ ΝΑ βαζω cluster center καπου που να μην εχω παρατηρηση
+# Το K-medoids,  χρησιμοποιεί πραγματικά σημεία από τα δεδομένα ως κέντρα για τις συστάδες αντί για μέσους όρους. Αυτό μπορεί να είναι πιο ανθεκτικό σε ακραίες τιμές και παρέχει έναν πιο ακριβή τρόπο για να εκπροσωπήσει μια συστάδα, ειδικά όταν δεν έχουμε συνεχείς αλλά κατηγορικές μεταβλητές.
+# Στην περίπτωση του K-medoids, αντί να υπολογίζεi το μέσο όρο (που χρησιμοποιείται στον K-means) για να βρω το κέντρο της συστάδας, ψάχνω για το σημείο (δεδομένο) εντός της συστάδας που ελαχιστοποιεί το άθροισμα των αποστάσεων από όλα τα άλλα σημεία της συστάδας.
+#                  Αυτό το σημείο θα ονομαστεί "medoid" και λειτουργεί ως το πιο αντιπροσωπευτικό σημείο της συστάδας.
+# το να ειναι παντα το κεντρο παρατηρηση , μου εξασφαλίζει οτι ποτε δεν θα εχω αδεια ομαδα  .
+# στην R, η υλοποίηση του K-means ή του medoit  περιλαμβάνει τη δυνατότητα πολλαπλών αρχικών σημείων εκκίνησης, που μπορεί να βοηθήσει στην αποφυγή τοπικών ελάχιστων και να οδηγήσει σε καλύτερη συνολική συσταδοποίηση.
+# Αρχικές Τιμές: Οι αρχικές τιμές για τα κέντρα των συστάδων πρέπει να επιλεγούν προσεκτικά. Θα πρέπει να είναι αρκετά απομακρυσμένες μεταξύ τους για να καλύψουν καλά το χώρο των δεδομένων alla oxi και παρα πολύ γιατι θα αναγκαζουν μια ακυρη ομαδα να δημιουργηθει καπου μακρια , αλλά και να αντιπροσωπεύουν πραγματικά σημεία από το σύνολο δεδομένων.
+# (Χωρίς Εγγύηση για την Καλύτερη Λύση: Ο K-means και οι παραλλαγές του δεν εγγυώνται ότι θα βρουν την οπτικά καλύτερη λύση. Η "καλύτερη" λύση είναι σχετική και εξαρτάται από την αρχικοποίηση του αλγορίθμου και τα δεδομένα).
+# δενδρόγραμμα (dendrogram) για να βοηθήσει στην απόφαση αυτή
+# θα κάνω και διάγραμμα που να δείχνει το μέσο Silhouette σκορ για διάφορους αριθμούς συστάδων που χρησιμοποιήθηκαν στην ανάλυση συσταδοποίησης των δεδομένων .
+#Το κοινό στοιχείο σε όλα αυτά τα κριτήρια είναι ότι παίρνουμε ένα σκορ για διάφορες τιμές του k  (το k αντιπροσωπεύει τον αριθμό των συστάδων) και τα συγκρίνουμε για να δούμε ποια τιμή δίνει το καλύτερο αποτέλεσμα.
+# ARI μπορω να κανω γιατι με αυτο αξιολογούμε το πόσο καλά ταιριάζει η κατηγοριοποίηση που έχει γίνει από έναν αλγόριθμο σε σχέση με μια προκαθορισμένη κατηγοριοποίηση ή κάποια άλλη μέθοδο.
+#π.χ. συγκρινω ward με commlete linkage ή με διαφορετικο αριθμο συσταδων
+#•	Μέσος συντελεστής σιλουέτας (Average silhouette): Αξιολογεί πόσο καλά ταιριάζει κάθε σημείο στη συστάδα του σε σχέση με τις άλλες συστάδες.
+# •	Μέθοδος του αγκώνα (Elbow method): Αναζητά το σημείο στο οποίο η προσθήκη άλλων συστάδων δεν προσφέρει σημαντική βελτίωση στην εξήγηση της συνολικής διακύμανσης.
+# • στατιστική Gap για να καθορίσεις τον βέλτιστο αριθμό συστάδων. Αρχικά, υπολογίζει την συνολική εντός-συστάδας μεταβλητότητα για κάθε τιμή του k και στη συνέχεια συγκρίνει αυτές τις τιμές με αυτές που θα περίμενες αν τα δεδομένα ήταν τυχαία διασκορπισμένα (με τη βοήθεια ενός "νοητικού" ή τυχαίου συνόλου δεδομένων).
+# • κριτήριο Hartigan( δυσκολος κωδικας για Kmedoit - οποτε αφου δεν εχω Kmeans δεν τα το δω ) είναι μια μέθοδος για να βρούμε τον βέλτιστο αριθμό συστάδων στα δεδομένα σου όταν κάνεις συσταδοποίηση. Αυτό που κάνει είναι να συγκρίνει την απόκλιση ή τη διακύμανση (dispersion) μέσα στις συστάδες για δύο διαδοχικούς αριθμούς συστάδων, q και q+1.
+# • Ο Δείκτης Dunn ( δεν τον εκανα γιατι η συναρτηση dunn δεν ειναι πλεον διαθεσιμη στην  library(fpc)) είναι ένας τρόπος να μετρήσω πόσο καλή είναι μια συσταδοποίηση. Αυτό που κάνει είναι να βλέπει το πόσο μακριά είναι οι συστάδες μεταξύ τους σε σχέση με το πόσο σφιχτά είναι τα δεδομένα μέσα σε κάθε συστάδα.Ο Δείκτης Dunn θα είναι μεγάλος όταν οι συστάδες είναι καλά διαχωρισμένες (δηλαδή έχουν μεγάλες αποστάσεις μεταξύ τους) και συμπαγείς (δηλαδή τα σημεία μέσα σε κάθε συστάδα είναι κοντά το ένα στο άλλο).
+
+#3) which variables can really used for clustering?
+# η επιλογη μεταβλητών γίνεται με post τρόπο, θα δω αν αυτες οι μεταβλητές εχουν διαφορετικές τιμες στα clusters και αν οχι τις πεταω
+#ANOVA
+
+#4) how we can access how good is our cluster ?
+# silhouette values
+#	τιμή κοντά στο 1 σημαίνει ότι το σημείο ταιριάζει πολύ καλά στη συστάδα του,
+# τιμή κοντά στο 0 σημαίνει ότι το σημείο βρίσκεται κοντά στα όρια της συστάδας του, έχοντας σχεδόν ίση μέση απόσταση από τα μέλη της δικής του συστάδας και τα μέλη της πιο κοντινής άλλης συστάδας.
+# μια τιμή κοντά στο -1 υποδηλώνει ότι το σημείο έχει τοποθετηθεί στη λάθος συστάδα επειδή είναι πιο κοντά στα μέλη μιας άλλης συστάδας παρά σε αυτά της δικής του.
+# θα κάνω διαγραμμα silhouette
+#Το μέσο Silhouette σκορ μπορεί να θεωρηθεί ως μια μέτρηση της "ποιότητας" των συστάδων: ένα υψηλό σκορ σημαίνει ότι τα μέλη μιας συστάδας είναι κοντά το ένα στο άλλο και μακριά από τα μέλη άλλων συστάδων,
+#ενώ ένα χαμηλό σκορ δείχνει ότι οι συστάδες ενδέχεται να επικαλύπτονται ή τα μέλη τους να μην είναι σαφώς διαχωρισμένα.
+#Wilks’ Lambda δεν μπορω να κάνω γιατι δεν εχω μονο συνεχη δεδομενα .
+
+#μπορω να τσεκαρω και κοβωντας τα data σε δυο κομματια αν θα βρω τα ιδια clusters .
+
+
+#5) how do we interpret the clusters ?
+#i)	Περιγραφική Στατιστική:  υπολογισμό βασικών περιγραφικών στατιστικών για κάθε συστάδα, όπως ο μέσος όρος, η διάμεσος, η τυπική απόκλιση, η ελάχιστη και η μέγιστη τιμή για κάθε μεταβλητή.
+#ii)οπτικοποιήσεις όπως ιστογράμματα, κουτιά με γραφήματα (box plots), ή πολυδιάστατες τεχνικές μείωσης διαστάσεων όπως PCA (Principal Component Analysis)
+#        για να δω πώς οι μεταβλητές συμπεριφέρονται μέσα στις συστάδες.
+#iii) Εξετάζω τις συσχετίσεις μεταξύ των μεταβλητών εντός της ίδιας συστάδας για να δω αν κάποιες μεταβλητές κινούνται μαζί ή αντίθετα.
+#     συνήθως αναζητώ μεταβλητές που να συσχετίζονται μεταξύ τους εντός μιας συστάδας( ειτε αρνητικα ειτε θετικα ). Καλα αυτο δημιουργει θεμα
+#iv) ANOVA (για μία μεταβλητή) ή η MANOVA (για πολλαπλές μεταβλητές), για να διαπιστώ αν οι διαφορές στις μεταβλητές μεταξύ των συστάδων είναι στατιστικά σημαντικές.
+#     εδω manova δεν γινεται αφου δεν εχω μονο συνεχεις μεταβλητες
+#     Η μηδενική υπόθεση στην ANOVA αναφέρεται στην παραδοχή ότι όλες οι ομάδες έχουν την ίδια μέση τιμή (δεν υπάρχουν διαφορές μεταξύ των ομάδων).
+#     Η απόρριψη της μηδενικής υπόθεσης υποδηλώνει ότι η μέση τιμή δεν είναι ίδια για όλες τις ομάδες, αλλά δεν λέει ποιες ακριβώς ομάδες διαφέρουν ή πόσο μεγάλη είναι η διαφορά.
+
+# Δεν εχει νοημαν να κάνω cluster αν δεν μπορω να ερμηνέυσω , καλυτερα χειροτερη λύση αλλα να εχει ερμηνεία .
+
+#v)Οπτικοποίηση των συστάδων είναι ένας τρόπος να δω  πώς διαχωρίζονται τα δεδομένα σου σε ομάδες
+#    Ένας δημοφιλής τρόπος για να το γινει αυτό είναι με ένα διάγραμμα συστάδων, όπου χρησιμοποιώ τις δύο πρώτες κύριες συνιστώσες των δεδομένων—αυτές είναι δύο περιληπτικές μεταβλητές που προκύπτουν από την ανάλυση κύριων συνιστωσών (PCA) και εξηγούν το μεγαλύτερο μέρος της διακύμανσης των δεδομένων σου.
+# π.χ. οπωε στις σημιεωσεις •	Χρήση PCA για Σύνοψη Διαφορετικών Εγκλημάτων: Αν εφαρμόσω την PCA σε ένα σύνολο δεδομένων πολλαπλών ειδών εγκλημάτων, θα μπορούσα να προσδιορίσω λίγες κυρίως συνιστώσες που εξηγούν την πλειοψηφία της μεταβλητότητας στα δεδομένα. Αυτές οι συνιστώσες θα αντικατοπτρίζουν συνδυασμούς των διαφόρων εγκλημάτων που συμβαίνουν μαζί πιο συχνά, ή που έχουν παρόμοια υποκείμενα αίτια.
+#vi) εναν πινακα με συχνοτητες παρατηρησεων ανα cluster και μετβλητων που χρησιμοποιηθηκαν + barplots
+#
+
+#__________________________________________________________________________________________________________
+
+#install.packages("cluster")
+library(cluster)
+
+data_k2 <-data_k1[,-c(1,16,17)]
+str(data_k2) # 17 μεταβλητες
+# κανω τον πινακα με τις αποστασεις
+gower_dist <- daisy(data_k2, metric = "gower") # Υπολογίζωω τις αποστάσεις Gower μεταξύ των παρατηρήσεων στο data_k2
+
+set.seed(123)
+#_______________________________________________________________________________________________________________________________________________________
+#ιεραρχικο
+
+#  agnes για την  μεθόδο του Ward στην απόσταση Gower
+ierarch_model <- agnes(gower_dist, method = "ward")
+
+par(mfrow=c(1, 1))
+#  δενδρογράμμα
+par(mfrow=c(1, 1))
+plot(ierarch_model, which.plots = 2, main = "Dendrogram using Gower distance and Ward method")
+
+# κοβω το δενδρόγραμμα σε 2 clusters όπως και στο k-medoids μετα
+ierarch_clusters <- cutree(ierarch_model, k = 2)
+silhouette_score_ierarch <- silhouette(ierarch_clusters, gower_dist)
+plot(silhouette_score_ierarch, main="Hierarchical Clustering Silhouette", col=c("#6B5B95", "#88B04B"), border = NA)
+ # βγαινει 0.2
+
+#___________________________________________________________________________________________________________________________________________________________
+
+#βλεπω οτι καλο ειναι να παρω κ=2 απο αυτα που μου εδειξε το δενδρογραμμα
+#( το ετρεξα και για Κ=3 και ειχα παλι το ιδιο average silhouette width=0.21
+# για κ=4 ειναι 0.2 , οποτε θα μεινω με το κ=2)
+
+# και παω να εφαρμοσω κ=2
+
+# Εφαρμόζω τον αλγόριθμο k-medoids στις αποστάσεις Gower με στόχο τη δημιουργία 2 συστάδων για να δουμε αρχικα πως θα ειναι
+
+#η pam προσπαθεί να βρει μια καλή αρχική εκτίμηση για τα medoids χρησιμοποιώντας τη μέθοδο του BUILD,
+#η οποία επιλέγει medoids που ελαχιστοποιούν το άθροισμα των αποστάσεων από όλα τα άλλα σημεία στο σετ δεδομένων.
+#Αυτή η αρχική επιλογή δεν είναι τυχαία, αλλά παρέχει μια μέθοδο εκκίνησης που θεωρητικά σκοπευει στη βελτίωση της τελικής συσταδοποίησης.
+
+kmedoids_result <- pam(gower_dist, k = 2, diss = TRUE)
+clusters <- kmedoids_result$clustering # παιρνει τις ετικέτες των συστάδων από τα αποτελέσματα του k-medoids και τις αποθηκεύει στη μεταβλητή clusters
+silhouette_score <- silhouette(kmedoids_result) # Υπολογίζει το σκορ σιλουετ για τις συστάδες που προέκυψαν από τον αλγόριθμο k-medoids
+summary(silhouette_score)# μια περίληψη των σκορ σιλουέτ, που βοηθά στην εκτίμηση της ποιότητας των συστάδων
+
+# Η πρώτη συστάδα έχει 1268 μονάδες και η δεύτερη 732. Αυτό δείχνει έναν λιγακι ανισορροπημένο διαχωρισμό των δεδομένων μεταξύ των δύο συστάδων.
+# Οι μέσες τιμές των πλατών σιλουέτ για τις δύο συστάδες είναι 0.183 για την πρώτη συστάδα και 0.266 για τη δεύτερη.
+#                     Αυτό υποδηλώνει ότι τα μέλη της δεύτερης συστάδας είναι, κατά μέσο όρο, πιο κοντά στα δικά τους κέντρα συστάδων
+#                      και πιο μακριά από τα κέντρα των άλλων συστάδων σε σύγκριση με τα μέλη της πρώτης συστάδας.
+#Τα σκορ σιλουέτ κυμαίνονται από -0.2648 έως 0.4085
+
+#  γραφήμα σιλουετ
+par(mfrow=c(1, 1))
+plot(silhouette_score, col = c("#6B5B95", "#88B04B"), border = NA,
+     main = "Silhouette plot k-medoit")
+
+
+
+# θα αποθηκευσω και για Κ=3 για να τρεξω μετα ARI
+kmedoids_result3 <- pam(gower_dist, k = 3, diss = TRUE)
+clusters3 <- kmedoids_result3$clustering # παιρνει τις ετικέτες των συστάδων από τα αποτελέσματα του k-medoids και τις αποθηκεύει στη μεταβλητή clusters
+
+#_____________________________________________
+
+# ομως οπως λεει η θεωρια καλο θα ηταν να το τρεξουμε και για  πολλαπλά αρχικά σημεία εκκίνησης,
+#που μπορεί να βοηθήσει στην αποφυγή τοπικών ελάχιστων και να οδηγήσει σε καλύτερη συνολική συσταδοποίηση
+n_starts <- 20 # θαεκτελέσω την pam 20 φορές
+
+best_pam <- NULL
+best_silhouette <- -Inf # αρχικοποίηση με έναν πολύ μικρό αριθμό
+
+for(i in 1:n_starts) {
+  set <- pam(gower_dist, k = 2, diss = TRUE)
+  silhouette_score <- silhouette(set)
+  avg_silhouette <- mean(silhouette_score[, 'sil_width'])
+
+  if(avg_silhouette > best_silhouette) {
+    best_silhouette <- avg_silhouette
+    best_pam <- set
+  }
+}
+
+#  silhouette score για το καλύτερο που βρηκε
+best_silhouette_score <- silhouette(best_pam)
+summary(best_silhouette_score )
+
+#  γραφήματa silhouette
+par(mfrow=c(1, 1))
+plot(best_silhouette_score, col = c("#6B5B95", "#88B04B"), border = NA,
+     main = "Silhouette plot for the best PAM ")
+
+#οκ μου βγαζει ακριβως το ιδιο average silhouette width=0.21.
+
+#_________________________________________________________________________________________________________________________________________________________
+
+library(factoextra)
+
+# Μετατροπή της απόστασης Gower σε δεδομένα που μπορούν να χρησιμοποιηθούν από την παμ
+mds_result <- cmdscale(gower_dist, k = 2)
+mds_data <- as.data.frame(mds_result)
+
+# elbow method
+fviz_nbclust(mds_data, kmeans, method = "wss")
+
+#απεικονίζει το μέσο σκορ σιλουέτας για διάφορους αριθμούς συστάδων
+fviz_nbclust(mds_data, pam, method = "silhouette", diss = gower_dist)
+# βλέπω οτι για 3 συσταδες ειναι το πιο υψηλο μέσο σκορ, οποτε θα παω να τρεξω τα απο πάνω για  να δω αν ισχυει
+
+# τρεξα τα απο πάνω για Κ=3 kai μου δινει
+# > summary(silhouette_score)# μια περίληψη των σκορ σιλουέτ, που βοηθά στην εκτίμηση της ποιότητας των συστάδων
+#Silhouette of 2000 units in 3 clusters from pam(x = gower_dist, k = 3, diss = TRUE) :
+#  Cluster sizes and average silhouette widths:
+#  885       695       420
+#0.1879030 0.2476680 0.1827575
+#Individual silhouette widths:
+#  Min. 1st Qu.  Median    Mean 3rd Qu.    Max.
+#-0.2675  0.1667  0.2416  0.2076  0.2983  0.3910
+
+# οποτε θα μεινω με K=2  καθως
+# για  k=2 παρουσιάζει μία συστάδα με σχετικά υψηλό μέσο πλάτος σιλουέτ (0.266),
+#το οποίο υποδηλώνει καλύτερη συνοχή και διαχωρισμό για αυτή τη συστάδα σε σύγκριση με τις συστάδες της διαμόρφωσης με k=3.
+
+
+
+#____________________________________________________________________________________________________________________________
+# ARI μπορω να κανω γιατι με αυτο αξιολογούμε το πόσο καλά ταιριάζει
+
+# και μετα θα συγκρινω το k medoit με κ=2 και κ=3
+
+library(mclust)
+adjustedRandIndex(clusters, clusters3) #0.62 διαφερουν αλλα οχι πολυ
+
+
+
+
+#_______________________________________________________________________________________________________________________________
+#μπορω να τσεκαρω και κοβωντας τα data σε δυο κομματια αν θα βρω τα ιδια clusters .
+#πόσο συνεπής είναι η συσταδοποίηση ανεξάρτητα από το πώς διαιρω τα δεδομένα.
+
+# δειγματοληψια των δεδομενων σε δύο τυχαία υποσύνολα
+indices <- sample(1:nrow(gower_mat), size = floor(nrow(gower_mat) / 2))
+#  2 υποσυνόλα από τον πίνακα
+subset1_mat <- gower_mat[indices, indices]
+subset2_mat <- gower_mat[-indices, -indices]
+subset1_dist <- as.dist(subset1_mat)
+subset2_dist <- as.dist(subset2_mat)
+pam_result1 <- pam(subset1_dist, k = 2) #  PAM στα υποσύνολα
+pam_result2 <- pam(subset2_dist, k = 2)
+# Σύγκριση των αποτελεσμάτων , ολα ενταξει πηγαν ,οσον αφορα τις συχνοτητες
+print(table(pam_result1$clustering))
+print(table(pam_result2$clustering))
+subset1_data <- data_k2[indices, ]
+subset2_data <- data_k2[-indices, ]
+subset1_data$cluster <- pam_result1$clustering
+subset2_data$cluster <- pam_result2$clustering
+
+#  περιγραφικά στατιστικά για το πρώτο υποσύνολο
+aggregate(. ~ cluster, data = subset1_data, FUN = mean)
+
+#  περιγραφικά στατιστικά για το δεύτερο υποσύνολο
+aggregate(. ~ cluster, data = subset2_data, FUN = mean)
+
+
+par(mfrow=c(1, 2))
+silhouette_score1 <- silhouette(pam_result1)
+plot(silhouette_score1, col = c("#6B5B95", "#88B04B"), border = NA,
+     main = "Silhouette Plot for Subset 1")
+silhouette_score2 <- silhouette(pam_result2)
+plot(silhouette_score2, col = c("#6B5B95", "#88B04B"), border = NA,
+     main = "Silhouette Plot for Subset 2")
+
+
+
+
+
+
+#οι συστάδες που προκύπτουν  φαίνονται να διατηρούν συνέπεια , ανεξάρτητα από την αρχική διαίρεση των δεδομένων σε δύο ξεχωριστά σύνολα.
+#τουλαχιστον οσον αφορα το average sil. width
+####################################################################################################################################
+#____________________________________________________________________________________________________________________________________
+
+#τωρα παω να δω με anova ποιες μεταβλητες να πεταξω εξω
+
+data_k2$cluster <- as.factor(clusters)
+
+
+# ANOVA για  καθε numeric
+aov_result_number_of_adults <- aov(number.of.adults ~ cluster, data = data_k2)
+summary(aov_result_number_of_adults)
+
+aov_result_number_of_children <- aov(number.of.children ~ cluster, data = data_k2)
+summary(aov_result_number_of_children)
+
+aov_result_number_of_weekend_nights <- aov(number.of.weekend.nights ~ cluster, data = data_k2)
+summary(aov_result_number_of_weekend_nights)
+
+aov_result_number_of_week_nights <- aov(number.of.week.nights ~ cluster, data = data_k2)
+summary(aov_result_number_of_week_nights)
+
+aov_result_lead_time <- aov(lead.time ~ cluster, data = data_k2)
+summary(aov_result_lead_time)
+
+aov_result_PC <- aov(P.C ~ cluster, data = data_k2)
+summary(aov_result_PC)
+
+aov_result_PnotC <- aov(P.not.C ~ cluster, data = data_k2)
+summary(aov_result_PnotC)
+
+aov_result_average_price <- aov(average.price ~ cluster, data = data_k2)
+summary(aov_result_average_price)
+
+aov_result_special_requests <- aov(special.requests ~ cluster, data = data_k2)
+summary(aov_result_special_requests)
+
+aov_result_total_guests <- aov(total.guests ~ cluster, data = data_k2)
+summary(aov_result_total_guests)
+
+aov_result_total_nights <- aov(total.nights ~ cluster, data = data_k2)
+summary(aov_result_total_nights)
+
+#____________________________-
+
+
+data_k2$cluster <- as.factor(clusters)
+
+
+
+# "Warning message:Chi-squared approximation may be incorrect"
+#π.χ.  οι αναμενώμενες τιμές κάθε κελιου δεν είναι ολες μεγαλύτερες απο 5
+#οποτε μπορώ να κάνω έιτε chisq.test με mode carlo προσομοίωση ,
+#είτε Fisher ( βεβαια εδω θα μου βγάλει error γιατι παίρνει όλους τους δυνατους πίνακεςκαι δεν γινεται λόγω μεγέθους)
+#το chiq.test είναι προσσέγγιση του fisher.test οποτε οκ
+
+
+# Δημιουργία πίνακα συνάφειας για την μεταβλητή 'type.of.meal' και τα clusters
+table_type_of_meal <- table(data_k2$type.of.meal, data_k2$cluster)
+fisher_test_type_of_meal <- fisher.test(table_type_of_meal, simulate.p.value = TRUE, B = 20000) #  Εκτέλεση Fisher's Exact Test , με προσομοωση
+fisher_test_type_of_meal    # αποριπτω , δεν μπορω να την αφαιρεσω
+
+table_car_parking_space<-table(data_k2$car.parking.space, data_k2$cluster)
+chisq_test_type_of_meal <- chisq.test(table_car_parking_space) # x^2 τεστ
+chisq_test_type_of_meal # αποριπτω , δεν μπορω να την αφαιρεσω
+
+table_room_type<-table(data_k2$room.type, data_k2$cluster)
+fisher_test_room_type <- fisher.test(table_room_type, simulate.p.value = TRUE, B = 20000) #  Εκτέλεση Fisher's Exact Test , με προσομοωση
+fisher_test_room_type # αποριπτω , δεν μπορω να την αφαιρεσω
+
+table_market_segment_type <- table(data_k2$market.segment.type, data_k2$cluster)
+fishers_test_result <- fisher.test(table_market_segment_type, simulate.p.value = TRUE, B = 20000)
+fishers_test_result  # αποριπτω , δεν μπορω να την αφαιρεσω
+
+table_repeated<-table(data_k2$repeated, data_k2$cluster)
+chisq_test_repeated <- chisq.test(table_repeated) # x^2 τεστ
+chisq_test_repeated # αποριπτω , δεν μπορω να την αφαιρεσω
+
+table_repeated<-table(data_k2$repeated, data_k2$cluster)
+chisq_test_repeated <- chisq.test(table_repeated)
+chisq_test_repeated # αποριπτω , δεν μπορω να την αφαιρεσω
+
+table_reservation_month<-table(data_k2$reservation.month, data_k2$cluster)
+chisq_test_reservation_month <- chisq.test(table_reservation_month) #  χ^2 τεστ
+chisq_test_reservation_month # αποριπτω , δεν μπορω να την αφαιρεσω
+
+
+# οποτε τωρα θα κρατησω ενα neo dataframe χωρις αυτες τις μεταβλητες που δεν μου διαχωριζουν ta cluster
+str(data_k2)
+data_new <- data_k2[,-c(4,11,13)] # number.of.week.nights , average.price , P.C.
+str(data_new)  # exv meinei me 15 μεταβλητες
+
+#_______________________________________________________________________________________________________________________________________________________________
+#_______________________________________________________________________________________________________________________________________________________________
+#_______________________________________________________________________________________________________________________________________________________________
+#_______________________________________________________________________________________________________________________________________________________________
+#_______________________________________________________________________________________________________________________________________________________________
+#_______________________________________________________________________________________________________________________________________________________________
+#_______________________________________________________________________________________________________________________________________________________________
+#_______________________________________________________________________________________________________________________________________________________________
+
+#οποτε παω τωρα να ξανατρεξω χωρις αυτες τις μεταβλητες
+
+gower_dist <- daisy(data_new, metric = "gower") # Υπολογίζωω τις αποστάσεις Gower μεταξύ των παρατηρήσεων στο data_new
+
+
+#_______________________________________________________________________________________________________________________________________________________
+#ιεραρχικο
+
+#  agnes για την  μεθόδο του Ward στην απόσταση Gower
+ierarch_model <- agnes(gower_dist, method = "ward")
+
+par(mfrow=c(1, 2))
+#  δενδρογράμμα
+
+plot(ierarch_model, which.plots = 2, main = "Dendrogram using less variables ")
+
+
+ierarch_clusters <- cutree(ierarch_model, k = 2)
+silhouette_score_ierarch <- silhouette(ierarch_clusters, gower_dist)
+summary(silhouette_score_ierarch)
+plot(silhouette_score_ierarch, main="Hierarchical Clustering Silhouette", col=c("#6B5B95", "#88B04B"), border = NA)
+# fainetai oti pleon einai πολυ πιο ξεκαθαρο οτε πρεπει να παρω 2 συσταδες
+# 0.38
+#___________________________________________________________________________________________________________________________________________________________
+
+
+kmedoids_result <- pam(gower_dist, k = 2, diss = TRUE)
+clusters <- kmedoids_result$clustering # παιρνει τις ετικέτες των συστάδων από τα αποτελέσματα του k-medoids και τις αποθηκεύει στη μεταβλητή clusters
+silhouette_score <- silhouette(kmedoids_result) # Υπολογίζει το σκορ σιλουετ για τις συστάδες που προέκυψαν από τον αλγόριθμο k-medoids
+summary(silhouette_score)# μια περίληψη των σκορ σιλουέτ, που βοηθά στην εκτίμηση της ποιότητας των συστάδων
+
+par(mfrow=c(1, 2))
+plot(silhouette_score, col = c("#6B5B95", "#88B04B"), border = NA,
+     main = "Silhouette plot")
+
+# πηγε στο 0.39 το aver silg width
+
+# θα αποθηκευσω και για Κ=3 για να τρεξω μετα ARI
+kmedoids_result3 <- pam(gower_dist, k = 3, diss = TRUE)
+clusters3 <- kmedoids_result3$clustering # παιρνει τις ετικέτες των συστάδων από τα αποτελέσματα του k-medoids και τις αποθηκεύει στη μεταβλητή clusters
+silhouette_score3 <- silhouette(kmedoids_result3) # Υπολογίζει το σκορ σιλουετ για τις συστάδες που προέκυψαν από τον αλγόριθμο k-medoids
+
+plot(silhouette_score3, col = c("#6B5B95", "#88B04B","red"), border = NA,
+     main = "Silhouette plot")
+# na faibetai oti ειναι πολυ χειροετρο για κ =3
+
+#______________________________________________________________________________________________________________________________
+
+
+# Μετατροπή της απόστασης Gower σε δεδομένα που μπορούν να χρησιμοποιηθούν από την παμ
+mds_result <- cmdscale(gower_dist, k = 2)
+mds_data <- as.data.frame(mds_result)
+
+# elbow method
+fviz_nbclust(mds_data, kmeans, method = "wss")
+
+#απεικονίζει το μέσο σκορ σιλουέτας για διάφορους αριθμούς συστάδων
+fviz_nbclust(mds_data, pam, method = "silhouette", diss = gower_dist)
+# ξεκαθαρο οτι πρεπει να παρω για 2
+
+
+
+#_______________________________________________________________________________________________________________________________
+#μπορω να τσεκαρω και κοβωντας τα data σε δυο κομματια αν θα βρω τα ιδια clusters .
+#πόσο συνεπής είναι η συσταδοποίηση ανεξάρτητα από το πώς διαιρω τα δεδομένα.
+
+# δειγματοληψια των δεδομενων σε δύο τυχαία υποσύνολα
+indices <- sample(1:nrow(gower_mat), size = floor(nrow(gower_mat) / 2))
+#  2 υποσυνόλα από τον πίνακα
+subset1_mat <- gower_mat[indices, indices]
+subset2_mat <- gower_mat[-indices, -indices]
+subset1_dist <- as.dist(subset1_mat)
+subset2_dist <- as.dist(subset2_mat)
+pam_result1 <- pam(subset1_dist, k = 2) #  PAM στα υποσύνολα
+pam_result2 <- pam(subset2_dist, k = 2)
+# Σύγκριση των αποτελεσμάτων , ολα ενταξει πηγαν ,οσον αφορα τις συχνοτητες
+print(table(pam_result1$clustering))
+print(table(pam_result2$clustering))
+subset1_data <- data_new[indices, ]
+subset2_data <- data_new[-indices, ]
+subset1_data$cluster <- pam_result1$clustering
+subset2_data$cluster <- pam_result2$clustering
+
+#  περιγραφικά στατιστικά για το πρώτο υποσύνολο
+aggregate(. ~ cluster, data = subset1_data, FUN = mean)
+
+#  περιγραφικά στατιστικά για το δεύτερο υποσύνολο
+aggregate(. ~ cluster, data = subset2_data, FUN = mean)
+
+
+par(mfrow=c(1, 2))
+silhouette_score1 <- silhouette(pam_result1)
+plot(silhouette_score1, col = c("#6B5B95", "#88B04B"), border = NA,
+     main = "Silhouette Plot for Subset 1")
+silhouette_score2 <- silhouette(pam_result2)
+plot(silhouette_score2, col = c("#6B5B95", "#88B04B"), border = NA,
+     main = "Silhouette Plot for Subset 2")
+
+
+
+
+#τωρα βελτιωθηκε πολυ .
+#οι συστάδες που προκύπτουν  φαίνονται να διατηρούν  συνέπεια , ανεξάρτητα από την αρχική διαίρεση των δεδομένων σε δύο ξεχωριστά σύνολα.
+#τουλαχιστον οσον αφορα το average sil. width
+####################################################################################################################################
+#____________________________________________________________________________________________________________________________________
+
+#τωρα παω να δω με anova ποιες μεταβλητες να πεταξω εξω
+
+
+data_new$cluster <- as.factor(clusters)
+
+
+# ANOVA για  καθε numeric
+aov_result_number_of_adults <- aov(number.of.adults ~ cluster, data = data_new)
+summary(aov_result_number_of_adults)
+
+aov_result_number_of_children <- aov(number.of.children ~ cluster, data = data_new)
+summary(aov_result_number_of_children)
+
+aov_result_number_of_weekend_nights <- aov(number.of.weekend.nights ~ cluster, data = data_new)
+summary(aov_result_number_of_weekend_nights)
+
+aov_result_lead_time <- aov(lead.time ~ cluster, data = data_new)
+summary(aov_result_lead_time)
+
+aov_result_PnotC <- aov(P.not.C ~ cluster, data = data_new)
+summary(aov_result_PnotC) # δεν βαγινει στατιοστικα σημαντικη πλεον !!!!!!!!!!!!!!!!! θα αφαιρεσω και αυτη
+
+aov_result_special_requests <- aov(special.requests ~ cluster, data = data_new)
+summary(aov_result_special_requests)
+
+aov_result_total_guests <- aov(total.guests ~ cluster, data = data_new)
+summary(aov_result_total_guests)
+
+aov_result_total_nights <- aov(total.nights ~ cluster, data = data_new)
+summary(aov_result_total_nights)
+
+#____________________________-
+
+
+data_new$cluster <- as.factor(clusters)
+
+table_type_of_meal <- table(data_new$type.of.meal, data_new$cluster)
+fisher_test_type_of_meal <- fisher.test(table_type_of_meal, simulate.p.value = TRUE, B = 20000) #  Εκτέλεση Fisher's Exact Test , με προσομοωση
+fisher_test_type_of_meal    # αποριπτω , δεν μπορω να την αφαιρεσω
+
+table_car_parking_space<-table(data_new$car.parking.space, data_new$cluster)
+chisq_test_type_of_meal <- chisq.test(table_car_parking_space) # x^2 τεστ
+chisq_test_type_of_meal # αποριπτω , δεν μπορω να την αφαιρεσω
+
+table_room_type<-table(data_new$room.type, data_new$cluster)
+fisher_test_room_type <- fisher.test(table_room_type, simulate.p.value = TRUE, B = 20000) #  Εκτέλεση Fisher's Exact Test , με προσομοωση
+fisher_test_room_type # αποριπτω , δεν μπορω να την αφαιρεσω
+
+table_market_segment_type <- table(data_new$market.segment.type, data_new$cluster)
+table_market_segment_type
+fishers_test_result <- fisher.test(table_market_segment_type, simulate.p.value = TRUE, B = 20000)
+fishers_test_result  # αποριπτω , δεν μπορω να την αφαιρεσω
+
+table_repeated<-table(data_new$repeated, data_new$cluster)
+chisq_test_repeated <- chisq.test(table_repeated) # x^2 τεστ
+chisq_test_repeated # αποριπτω , δεν μπορω να την αφαιρεσω
+
+table_repeated<-table(data_new$repeated, data_new$cluster)
+chisq_test_repeated <- chisq.test(table_repeated)
+chisq_test_repeated # αποριπτω , δεν μπορω να την αφαιρεσω
+
+table_reservation_month<-table(data_new$reservation.month, data_new$cluster)
+chisq_test_reservation_month <- chisq.test(table_reservation_month) #  χ^2 τεστ
+chisq_test_reservation_month # αποριπτω , δεν μπορω να την αφαιρεσω
+
+#_________________________________________________________________________________________
+str(data_new)
+levels(data_new$type.of.meal)
+levels(data_new$car.parking.space)
+levels(data_new$room.type)
+levels(data_new$market.segment.type)
+levels(data_new$repeated)
+levels(data_new$reservation.month)
+
+table(clusters, data_new$type.of.meal)
+adjustedRandIndex(clusters, data_new$type.of.meal)
+
+table(clusters, data_new$car.parking.space)
+adjustedRandIndex(clusters, data_new$car.parking.space)
+
+table(clusters, data_new$room.type)
+adjustedRandIndex(clusters, data_new$room.type)#
+
+table(clusters, data_new$market.segment.type)
+adjustedRandIndex(clusters, data_new$market.segment.type)# η συγκεκριμνεη μεταβλητη παιζει πολυ μεγαλο ρολο
+
+table(clusters, data_new$repeated)
+adjustedRandIndex(clusters, data_new$repeated)
+
+table(clusters, data_new$reservation.month)
+adjustedRandIndex(clusters, data_new$reservation.month)
+
+#___________________________________________________________________________________________________
+#___________________________________________________________________________________________________
+# ωραια αρα τώρα αφαιρω και την P not C
+#str(data_k2)
+#data_new <- data_k2[,-c(4,11,12,13)] # number.of.week.nights , average.price , P.C., P not C
+#str(data_new)  # exv meinei me 14 μεταβλητες
+
+# kai janatrexv ola ta panw μετα τις πολλες οριζοντιες γραμμες
+# ουσιαστικα δεν αλλαζει κατι # απλώ ςβγαινει και P not C , αφου αφαιρεσω τις number.of.week.nights , average.price , P.C. και ξανατρεξω
+# και μετα ουσιαστικα απο τα adjustedRandIndex αποφασισα να αφαιρεσω και τις  kathgorikes poy den exoyn μεγαλο ΑRI( krataw mono market.segment.type)
+
+str(data_k2)
+data_new <- data_k2[,-c(5,6,7,10,15,4,11,12,13,16)] # number.of.week.nights , average.price , P.C., P not C
+str(data_new)  # exv meinei me 7 μεταβλητες
+
+# kai janatrexv ola ta πάνω μετα τις πολλες οριζοντιες γραμμες
+
+
+############################################################################################################################################
+#__________________________________________________________________________________________________________________________________________
+
+
+# Perigrafika για καθε κλαστερ
+aggregate(. ~ clusters, data=data_new, function(x) {
+  c(mean=mean(x, na.rm=TRUE),
+    median=median(x, na.rm=TRUE),
+    sd=sd(x, na.rm=TRUE),
+    min=min(x, na.rm=TRUE),
+    max=max(x, na.rm=TRUE))
+})
+str(data_new)
+
+
+par(mfrow=c(1, 1))
+
+boxplot(data_new$number.of.adults ~ data_new$cluster,
+        main = "Boxplot of Number of Adults by Cluster",
+        xlab = "Cluster",
+        ylab = "Number of Adults")
+
+
+boxplot(data_new$number.of.children  ~ data_new$cluster,
+        main = "Boxplot of Number of children by Cluster",
+        xlab = "Cluster",
+        ylab = "Number of children")
+
+boxplot(data_new$number.of.weekend.nights  ~ data_new$cluster,
+        main = "Boxplot of Number of number of weekend nights by Cluster",
+        xlab = "Cluster",
+        ylab = "Number of number of weekend nights")
+
+
+boxplot(data_new$special.requests  ~ data_new$cluster,
+        main = "Boxplot of Number of special requests by Cluster",
+        xlab = "Cluster",
+        ylab = "Number of number of special requests")
+
+
+par(mfrow=c(1, 2))
+
+hist(data_new$lead.time[data_new$cluster == 1], main = "Histogram of Lead Time for Cluster 1", xlab = "Lead Time", breaks = 30)
+hist(data_new$lead.time[data_new$cluster == 2], main = "Histogram of Lead Time for Cluster 2", xlab = "Lead Time", breaks = 30)
+
+hist(data_new$total.nights[data_new$cluster == 1], main = "Histogram of Total Nights for Cluster 1", xlab = "Total Nights", breaks = 30)
+hist(data_new$total.nights[data_new$cluster == 2], main = "Histogram of Total Nights for Cluster 2", xlab = "Total Nights", breaks = 30)
+
+#_______________________________________________________________________________________________
+
+pca_result <- prcomp(gower_dist, scale = FALSE) # PCA στις αποστάσεις Gower
+
+pca_data <- data.frame(pca_result$x)
+pca_data$cluster <- as.factor(clusters)
+
+colors <- c("#6B5B95", "#88B04B")
+
+plot(pca_data$PC1, pca_data$PC2, col=colors[pca_data$cluster], pch=19,
+     xlab="Principal Component 1", ylab="Principal Component 2",
+     main="K-medoids Clustering with Gower Distance ")
+legend("topright", legend=levels(pca_data$cluster), fill=colors, title="Cluster ID")
+
+#_________________________________________________________________________________________________________________________________________________________
